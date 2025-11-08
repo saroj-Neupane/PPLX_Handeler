@@ -82,7 +82,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='pplx_gui',
+    name='PPLX_Handeler',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
