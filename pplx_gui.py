@@ -33,10 +33,7 @@ from pplx_config import (
     analyze_mr_note_for_aux_data,
     extract_scid_from_filename,
     clean_scid_keywords,
-    normalize_scid_for_excel_lookup,
-    DEFAULT_COMM_OWNERS,
-    DEFAULT_POWER_OWNERS,
-    DEFAULT_IGNORE_SCID_KEYWORDS
+    normalize_scid_for_excel_lookup
 )
 
 # Excel support
@@ -267,26 +264,15 @@ class AuxDataEditFrame(ttk.Frame):
         super().__init__(parent)
         self.config_manager = config_manager
         self.aux_entries = []
+        self.ignore_scid_keywords = self.config_manager.get("ignore_scid_keywords", "")
         
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the Aux Data editing UI."""
-        # Title
-        title_label = ttk.Label(self, text="Aux Data Fields", font=("Arial", 12, "bold"))
-        title_label.pack(pady=(0, 10))
-        
-        # Instructions
-        instructions = ttk.Label(
-            self, 
-            text="Enter values for Aux Data 1 and 3. Other fields will be auto-filled based on logic.",
-            foreground="gray"
-        )
-        instructions.pack(pady=(0, 10))
-        
-        # Excel file selection
+        # Excel file selection (top of panel)
         excel_frame = ttk.Frame(self)
-        excel_frame.pack(fill="x", padx=10, pady=(0, 10))
+        excel_frame.pack(fill="x", padx=10, pady=(0, 12))
         
         ttk.Label(excel_frame, text="Excel Data File:", width=15).pack(side="left")
         self.excel_file_var = tk.StringVar()
@@ -297,51 +283,32 @@ class AuxDataEditFrame(ttk.Frame):
         
         ttk.Button(excel_frame, text="Browse", command=self.select_excel_file).pack(side="left")
         
-        # Owner configuration frame
-        owners_frame = ttk.LabelFrame(self, text="Owner Configuration", padding=10)
+        # Title
+        title_label = ttk.Label(self, text="Aux Data Fields", font=("Arial", 12, "bold"))
+        title_label.pack(pady=(0, 10))
+        
+        # Keyword configuration frame
+        owners_frame = ttk.LabelFrame(self, text="Keyword Configuration", padding=10)
         owners_frame.pack(fill="x", padx=10, pady=(10, 0))
+        owners_frame.columnconfigure(1, weight=1)
         
-        # Comm Owners
-        comm_frame = ttk.Frame(owners_frame)
-        comm_frame.pack(fill="x", pady=2)
-        ttk.Label(comm_frame, text="Comm Owners:", width=15).pack(side="left")
-        self.comm_owners_var = tk.StringVar()
-        self.comm_owners_var.set(self.config_manager.get("comm_owners", DEFAULT_COMM_OWNERS))
-        comm_entry = ttk.Entry(comm_frame, textvariable=self.comm_owners_var)
-        comm_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        comm_entry.bind('<FocusOut>', self.save_owner_config)
-        
-        # Power Owners
-        power_frame = ttk.Frame(owners_frame)
-        power_frame.pack(fill="x", pady=2)
-        ttk.Label(power_frame, text="Power Owners:", width=15).pack(side="left")
-        self.power_owners_var = tk.StringVar()
-        self.power_owners_var.set(self.config_manager.get("power_owners", DEFAULT_POWER_OWNERS))
-        power_entry = ttk.Entry(power_frame, textvariable=self.power_owners_var)
-        power_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        power_entry.bind('<FocusOut>', self.save_owner_config)
-        
-        # Instructions
-        ttk.Label(owners_frame, text="Separate multiple owners with commas", 
-                 foreground="gray", font=("Arial", 8)).pack(pady=(5, 0))
-        
-        # SCID Keywords Configuration frame
-        scid_frame = ttk.LabelFrame(self, text="SCID Keywords Configuration", padding=10)
-        scid_frame.pack(fill="x", padx=10, pady=(10, 0))
-        
-        # Ignore SCID Keywords
-        ignore_frame = ttk.Frame(scid_frame)
-        ignore_frame.pack(fill="x", pady=2)
-        ttk.Label(ignore_frame, text="Ignore SCID Keywords:", width=20).pack(side="left")
-        self.ignore_scid_keywords_var = tk.StringVar()
-        self.ignore_scid_keywords_var.set(self.config_manager.get("ignore_scid_keywords", DEFAULT_IGNORE_SCID_KEYWORDS))
-        ignore_entry = ttk.Entry(ignore_frame, textvariable=self.ignore_scid_keywords_var)
-        ignore_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        ignore_entry.bind('<FocusOut>', self.save_scid_config)
-        
-        # Instructions for SCID keywords
-        ttk.Label(scid_frame, text="Keywords to remove from SCID before processing (comma-separated)", 
-                 foreground="gray", font=("Arial", 8)).pack(pady=(5, 0))
+        self.comm_owners_var = tk.StringVar(value=self.config_manager.get("comm_owners", ""))
+        self.power_owners_var = tk.StringVar(value=self.config_manager.get("power_owners", ""))
+        self.pco_keywords_var = tk.StringVar(value=self.config_manager.get("pco_keywords", ""))
+        self.aux5_keywords_var = tk.StringVar(value=self.config_manager.get("aux5_keywords", ""))
+
+        keyword_fields = [
+            ("Comm Keywords:", self.comm_owners_var),
+            ("Power Keywords:", self.power_owners_var),
+            ("PCO Keywords:", self.pco_keywords_var),
+            ("Riser Keywords:", self.aux5_keywords_var)
+        ]
+
+        for row, (label_text, var) in enumerate(keyword_fields):
+            ttk.Label(owners_frame, text=label_text, width=18, anchor="w").grid(row=row, column=0, sticky="w", pady=2, padx=(0, 6))
+            entry = ttk.Entry(owners_frame, textvariable=var)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.bind('<FocusOut>', self.save_owner_config)
         
         # Define the 5 Aux Data fields with their descriptions
         self.aux_fields = [
@@ -465,18 +432,30 @@ class AuxDataEditFrame(ttk.Frame):
         """Save owner configuration when values change."""
         self.config_manager.set("comm_owners", self.comm_owners_var.get())
         self.config_manager.set("power_owners", self.power_owners_var.get())
-    
-    def save_scid_config(self, event=None):
-        """Save SCID configuration when values change."""
-        self.config_manager.set("ignore_scid_keywords", self.ignore_scid_keywords_var.get())
+        if hasattr(self, 'pco_keywords_var'):
+            self.config_manager.set("pco_keywords", self.pco_keywords_var.get())
+        if hasattr(self, 'aux5_keywords_var'):
+            self.config_manager.set("aux5_keywords", self.aux5_keywords_var.get())
     
     def analyze_mr_note(self, mr_note: str) -> tuple:
         """Analyze mr_note to determine Aux Data 4 and 5 values."""
-        # Get owner lists from GUI configuration
-        comm_owners = self.comm_owners_var.get().split(',')
-        power_owners = self.power_owners_var.get().split(',')
+        # Get keyword lists from GUI configuration
+        comm_keywords = [keyword.strip() for keyword in self.comm_owners_var.get().split(',') if keyword.strip()]
+        power_keywords = [keyword.strip() for keyword in self.power_owners_var.get().split(',') if keyword.strip()]
+        pco_keywords = []
+        if hasattr(self, 'pco_keywords_var'):
+            pco_keywords = [keyword.strip() for keyword in self.pco_keywords_var.get().split(',') if keyword.strip()]
+        aux5_keywords = []
+        if hasattr(self, 'aux5_keywords_var'):
+            aux5_keywords = [keyword.strip() for keyword in self.aux5_keywords_var.get().split(',') if keyword.strip()]
         
-        return analyze_mr_note_for_aux_data(mr_note, comm_owners, power_owners)
+        return analyze_mr_note_for_aux_data(
+            mr_note,
+            comm_keywords=comm_keywords,
+            power_keywords=power_keywords,
+            pco_keywords=pco_keywords,
+            aux5_keywords=aux5_keywords
+        )
     
     def get_aux_values(self) -> Dict[int, str]:
         """Get the current Aux Data values for processing."""
@@ -758,7 +737,7 @@ class ProcessingFrame(ttk.Frame):
                     
                     # Extract pole number from original filename and apply SCID keyword filtering (for filename generation)
                     pole_number = extract_scid_from_filename(filename)
-                    clean_pole_number = clean_scid_keywords(pole_number, self.aux_frame.ignore_scid_keywords_var.get())
+                    clean_pole_number = clean_scid_keywords(pole_number, getattr(self.aux_frame, "ignore_scid_keywords", ""))
                     
                     # Check if SCID is valid (if Excel data is loaded)
                     if excel_data and scid not in valid_scids:
@@ -826,8 +805,19 @@ class ProcessingFrame(ttk.Frame):
                     # Get final Aux Data values from the handler
                     final_aux_data = handler.get_aux_data()
                     
-                    # Clean values for filename (remove invalid characters)
-                    clean_pole_number_safe = ''.join(c for c in clean_pole_number if c.isalnum() or c in '-_')
+                    # Check if Aux Data 4 is 'PCO' and append to pole number if needed
+                    aux_data_4 = final_aux_data.get('Aux Data 4', '')
+                    if aux_data_4 == 'PCO':
+                        clean_pole_number = f"{clean_pole_number} PCO"
+                        self.log_message(f"  Aux Data 4 is 'PCO', appending to pole number: {clean_pole_number}")
+                    
+                    # Clean values for filename (remove invalid characters, but allow spaces for PCO)
+                    # For filename, we'll allow spaces when PCO is present
+                    if aux_data_4 == 'PCO':
+                        # Allow spaces and alphanumeric characters, dots, hyphens, underscores for PCO format
+                        clean_pole_number_safe = ''.join(c for c in clean_pole_number if c.isalnum() or c in '-_. ')
+                    else:
+                        clean_pole_number_safe = ''.join(c for c in clean_pole_number if c.isalnum() or c in '-_')
                     clean_pole_tag = ''.join(c for c in str(pole_tag) if c.isalnum() or c in '-_')
                     clean_condition = ''.join(c for c in str(condition) if c.isalnum() or c in '-_')
                     
@@ -835,7 +825,7 @@ class ProcessingFrame(ttk.Frame):
                     new_filename = f"{clean_pole_number_safe}_{clean_pole_tag}_{clean_condition}.pplx"
                     output_file = os.path.join(output_dir, new_filename)
                     
-                    # Set Pole Number from cleaned pole number
+                    # Set Pole Number from cleaned pole number (with PCO if applicable)
                     handler.set_pole_attribute('Pole Number', clean_pole_number)
                     self.log_message(f"  Set Pole Number: {clean_pole_number}")
                     

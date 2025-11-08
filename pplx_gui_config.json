@@ -1,7 +1,7 @@
 {
   "last_input_directory": "",
   "last_output_directory": "",
-  "window_geometry": "1536x869+-60+-19",
+  "window_geometry": "1536x869+-202+398",
   "recent_files": [],
   "default_aux_values": [
     "",
@@ -13,12 +13,16 @@
     "",
     ""
   ],
-  "excel_file_path": "C:/Users/nsaro/Downloads/MNMW025 Nodes-Sections-Connections XLSX.xlsx",
-  "last_folder_path": "C:/Users/nsaro/Desktop/3DModels",
+  "excel_file_path": "C:/Users/nsaro/Desktop/Python Projects/PPLX_Handeler/Test Files/COAR-FR03 - 3 Nodes-Sections-Connections XLSX.xlsx",
+  "last_folder_path": "C:/Users/nsaro/Desktop/Python Projects/PPLX_Handeler/Test Files/PPLX",
   "auto_fill_aux1": true,
-  "ignore_scid_keywords": "Foreign Pole, AFOREIGNPOLE",
+  "ignore_scid_keywords": "Foreign Pole",
   "last_aux_values": {
     "aux_data_1": "(Will auto-fill from Excel)",
     "aux_data_3": "PROPOSED"
-  }
+  },
+  "comm_owners": "CATV, TELCO,FIBER, METRONET",
+  "power_owners": "XCEL",
+  "pco_keywords": "REPLACING EXISTING, POLE WITH NEW",
+  "aux5_keywords": "INSTALL METRONET RISER"
 }

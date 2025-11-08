@@ -4,6 +4,7 @@ Script to create PPLX_Fill_Details.xlsx from updated PPLX files and Excel data.
 """
 
 import os
+import json
 import xml.etree.ElementTree as ET
 import pandas as pd
 from pathlib import Path
@@ -131,6 +132,48 @@ def load_excel_data(excel_file_path):
     return mr_note_mapping, full_data_mapping
 
 
+def load_keyword_settings(config_filename="pplx_gui_config.json"):
+    """
+    Load keyword overrides from the GUI configuration file, if available.
+    
+    Args:
+        config_filename (str): Name of the configuration file to search for.
+        
+    Returns:
+        tuple: (comm_keywords, power_keywords, pco_keywords, aux5_keywords)
+               where each element is a list of keywords (empty when unspecified).
+    """
+    def parse_keywords(value):
+        if not value:
+            return None
+        if isinstance(value, list):
+            keywords = [str(keyword).strip() for keyword in value if str(keyword).strip()]
+        else:
+            keywords = [keyword.strip() for keyword in str(value).split(',') if keyword.strip()]
+        return keywords or None
+    
+    candidate_paths = [
+        Path(config_filename),
+        Path(__file__).with_name(config_filename)
+    ]
+    
+    for path in candidate_paths:
+        try:
+            if path.is_file():
+                with open(path, 'r') as config_file:
+                    config = json.load(config_file)
+                return (
+                    parse_keywords(config.get('comm_owners')) or [],
+                    parse_keywords(config.get('power_owners')) or [],
+                    parse_keywords(config.get('pco_keywords')) or [],
+                    parse_keywords(config.get('aux5_keywords')) or []
+                )
+        except Exception:
+            continue
+    
+    return [], [], [], []
+
+
 def update_pplx_aux_data(pplx_file_path, aux_data_updates):
     """
     Update multiple Aux Data fields in a PPLX file.
@@ -208,6 +251,9 @@ def create_pplx_excel():
     
     print(f"Found {len(pplx_files)} PPLX files to process")
     
+    # Load keyword overrides if available
+    comm_keywords, power_keywords, pco_keywords, aux5_keywords = load_keyword_settings()
+    
     # Prepare CSV data
     csv_data = []
     processed_count = 0
@@ -236,7 +282,15 @@ def create_pplx_excel():
         mr_note = mr_note_mapping.get(file_number, '')
         
         # Determine all Aux Data values based on Excel data and mr_note
-        aux_data_updates = determine_aux_data_values(file_number, mr_note, full_data_mapping)
+        aux_data_updates = determine_aux_data_values(
+            file_number,
+            mr_note,
+            full_data_mapping,
+            comm_keywords=comm_keywords,
+            power_keywords=power_keywords,
+            pco_keywords=pco_keywords,
+            aux5_keywords=aux5_keywords
+        )
         
         # Update the PPLX file with new Aux Data values
         if update_pplx_aux_data(modified_file_path, aux_data_updates):
