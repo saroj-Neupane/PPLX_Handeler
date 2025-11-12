@@ -19,8 +19,14 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
 import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor
 import threading
 from datetime import datetime
 import csv
@@ -47,7 +53,7 @@ except ImportError:
 class PPLXConfigManager:
     """Manages application configuration and path memory."""
     
-    def __init__(self, config_file: str = "pplx_gui_config.json"):
+    def __init__(self, config_file: str = "config.json"):
         # Try to find the config file in multiple locations
         self.config_file = self._find_config_file(config_file)
         self.config = self.load_config()
@@ -148,21 +154,48 @@ class PPLXConfigManager:
 class PPLXFileListFrame(ttk.Frame):
     """Frame for displaying and managing selected PPLX files."""
     
-    def __init__(self, parent, config_manager: PPLXConfigManager):
+    def __init__(self, parent, config_manager: PPLXConfigManager, category: str):
         super().__init__(parent)
         self.config_manager = config_manager
-        self.files = []
+        self.category = category
+        self.files: List[str] = []
+        self.current_folder = ""
+        self.source_path = ""
+        self.source_type = "folder"
+        self.display_name = ""
+        self.temp_directory = None
+        normalized_category = self.category.lower().replace(" ", "_")
+        self.config_key = f"last_{normalized_category}_folder_path"
         
         self.setup_ui()
+        
+        # Auto-load last used source for this category
+        last_source = self.config_manager.get(self.config_key, "")
+        if last_source:
+            try:
+                if last_source.lower().endswith(".zip") and os.path.exists(last_source):
+                    self.load_zip_source(last_source, remember=False)
+                elif os.path.isdir(last_source):
+                    self.load_directory_source(last_source, remember=False)
+            except Exception as exc:
+                print(f"Warning: Could not auto-load previous source '{last_source}': {exc}")
     
     def setup_ui(self):
         """Setup the file list UI."""
         # Title
-        title_label = ttk.Label(self, text="PPLX Files in Selected Folder", font=("Arial", 12, "bold"))
+        title_label = ttk.Label(
+            self,
+            text=f"{self.category} PPLX Files",
+            font=("Arial", 12, "bold")
+        )
         title_label.pack(pady=(0, 10))
         
         # Select folder button
-        ttk.Button(self, text="Select Folder", command=self.select_folder).pack(pady=(0, 10))
+        ttk.Button(
+            self,
+            text=f"Select {self.category} Folder",
+            command=self.select_folder
+        ).pack(pady=(0, 10))
         
         # File list with scrollbar
         list_frame = ttk.Frame(self)
@@ -176,48 +209,80 @@ class PPLXFileListFrame(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
         
         # Current folder label
-        self.folder_label = ttk.Label(self, text="No folder selected", foreground="gray")
+        self.folder_label = ttk.Label(
+            self,
+            text=f"No {self.category} source selected",
+            foreground="gray"
+        )
         self.folder_label.pack(pady=(5, 0))
         
         # Status label
-        self.status_label = ttk.Label(self, text="Select a folder containing PPLX files")
+        self.status_label = ttk.Label(
+            self,
+            text=f"Select a folder or ZIP containing {self.category} PPLX files"
+        )
         self.status_label.pack(pady=(10, 0))
     
     def select_folder(self):
         """Select folder containing PPLX files."""
-        initial_dir = self.config_manager.get("last_input_directory", "")
+        initial_dir = self.config_manager.get(self.config_key, "")
         if not initial_dir or not os.path.exists(initial_dir):
             initial_dir = os.getcwd()
         
-        folder = filedialog.askdirectory(
-            title="Select Folder with PPLX Files",
-            initialdir=initial_dir
+        zip_source = filedialog.askopenfilename(
+            title=f"Select {self.category} ZIP Archive (Cancel to pick a folder)",
+            initialdir=initial_dir,
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")]
         )
         
+        if zip_source:
+            source_path = Path(zip_source)
+            if source_path.is_file() and source_path.suffix.lower() == ".zip":
+                self.load_zip_source(str(source_path))
+            elif source_path.is_dir():
+                self.load_directory_source(str(source_path))
+            else:
+                messagebox.showerror(
+                    "Invalid Selection",
+                    "Please select a folder or a .zip archive containing PPLX files."
+                )
+            return
+        
+        folder = filedialog.askdirectory(
+            title=f"Select {self.category} Folder with PPLX Files",
+            initialdir=initial_dir,
+            mustexist=True
+        )
         if folder:
-            self.current_folder = folder
-            self.config_manager.set("last_folder_path", folder)
-            self.load_folder_files()
+            self.load_directory_source(folder)
     
     def load_folder_files(self):
         """Load all PPLX files from the current folder."""
         if not hasattr(self, 'current_folder') or not self.current_folder:
             return
             
+        if not os.path.exists(self.current_folder):
+            messagebox.showerror("Error", f"Source path not found: {self.current_folder}")
+            return
+            
         self.files.clear()
         
         try:
-            # Find all pplx files in folder
+            # Find all pplx files recursively
             pplx_files = []
-            for file in os.listdir(self.current_folder):
-                if file.lower().endswith('.pplx'):
-                    file_path = os.path.join(self.current_folder, file)
-                    pplx_files.append(file_path)
+            for root, _, filenames in os.walk(self.current_folder):
+                for filename in filenames:
+                    if filename.lower().endswith('.pplx'):
+                        file_path = os.path.join(root, filename)
+                        pplx_files.append(file_path)
             
-            self.files = sorted(pplx_files)  # Sort alphabetically
+            self.files = sorted(pplx_files)
             
             # Update folder label
-            self.folder_label.config(text=f"Folder: {os.path.basename(self.current_folder)}", foreground="black")
+            source_label = self.display_name or os.path.basename(self.current_folder)
+            if self.source_type == "zip":
+                source_label = f"{source_label} [ZIP]"
+            self.folder_label.config(text=f"Source: {source_label}", foreground="black")
             
             self.update_display()
             
@@ -232,10 +297,17 @@ class PPLXFileListFrame(ttk.Frame):
     
     def clear_files(self):
         """Clear all files from the list."""
+        self.cleanup_temp_dir()
         self.files.clear()
         if hasattr(self, 'current_folder'):
             self.current_folder = ""
-        self.folder_label.config(text="No folder selected", foreground="gray")
+        self.source_path = ""
+        self.display_name = ""
+        self.source_type = "folder"
+        self.folder_label.config(
+            text=f"No {self.category} source selected",
+            foreground="gray"
+        )
         self.update_display()
     
     def update_display(self):
@@ -243,18 +315,94 @@ class PPLXFileListFrame(ttk.Frame):
         self.file_listbox.delete(0, tk.END)
         
         for file_path in self.files:
-            filename = os.path.basename(file_path)
-            self.file_listbox.insert(tk.END, filename)
+            try:
+                display_name = os.path.relpath(file_path, self.current_folder)
+            except ValueError:
+                display_name = os.path.basename(file_path)
+            self.file_listbox.insert(tk.END, display_name.replace("\\", "/"))
         
         count = len(self.files)
         if count > 0:
-            self.status_label.config(text=f"{count} PPLX file{'s' if count != 1 else ''} found")
+            self.status_label.config(
+                text=f"{count} {self.category} PPLX file{'s' if count != 1 else ''} found"
+            )
         else:
-            self.status_label.config(text="Select a folder containing PPLX files")
+            self.status_label.config(
+                text=f"Select a folder or ZIP containing {self.category} PPLX files"
+            )
     
     def get_files(self) -> List[str]:
         """Get the list of selected files."""
         return self.files.copy()
+    
+    def get_working_directory(self) -> str:
+        """Return the working directory (real folder on disk)."""
+        return self.current_folder
+    
+    def get_source_path(self) -> str:
+        """Return the path originally selected by the user (folder or zip)."""
+        return self.source_path or self.current_folder
+    
+    def get_current_folder(self) -> str:
+        """Backward-compatible alias for working directory."""
+        return self.current_folder
+    
+    def cleanup_temp_dir(self):
+        """Remove any temporary extraction directory."""
+        if self.temp_directory and os.path.exists(self.temp_directory):
+            shutil.rmtree(self.temp_directory, ignore_errors=True)
+        self.temp_directory = None
+    
+    def destroy(self):
+        """Ensure temp data is cleaned up when frame is destroyed."""
+        self.cleanup_temp_dir()
+        super().destroy()
+    
+    def load_directory_source(self, folder_path: str, remember: bool = True):
+        """Configure frame to use a regular folder."""
+        if not os.path.isdir(folder_path):
+            messagebox.showerror("Error", f"Folder not found: {folder_path}")
+            return
+        
+        self.cleanup_temp_dir()
+        self.source_type = "folder"
+        self.source_path = folder_path
+        self.display_name = os.path.basename(os.path.normpath(folder_path)) or folder_path
+        self.current_folder = folder_path
+        
+        if remember:
+            self.config_manager.set(self.config_key, folder_path)
+        
+        self.load_folder_files()
+    
+    def load_zip_source(self, zip_path: str, remember: bool = True):
+        """Configure frame to use a ZIP archive, extracting it to a temp directory."""
+        if not os.path.exists(zip_path):
+            messagebox.showerror("Error", f"ZIP file not found: {zip_path}")
+            return
+        
+        self.cleanup_temp_dir()
+        temp_dir = ""
+        try:
+            temp_dir = tempfile.mkdtemp(prefix=f"pplx_{self.category.lower()}_")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+        except Exception as exc:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            messagebox.showerror("Error", f"Failed to extract ZIP:\n{exc}")
+            return
+        
+        self.temp_directory = temp_dir
+        self.source_type = "zip"
+        self.source_path = zip_path
+        self.display_name = os.path.basename(zip_path)
+        self.current_folder = temp_dir
+        
+        if remember:
+            self.config_manager.set(self.config_key, zip_path)
+        
+        self.load_folder_files()
 
 
 class AuxDataEditFrame(ttk.Frame):
@@ -274,7 +422,7 @@ class AuxDataEditFrame(ttk.Frame):
         excel_frame = ttk.Frame(self)
         excel_frame.pack(fill="x", padx=10, pady=(0, 12))
         
-        ttk.Label(excel_frame, text="Excel Data File:", width=15).pack(side="left")
+        ttk.Label(excel_frame, text="Node-Section-Connection File:").pack(side="left", padx=(0, 4))
         self.excel_file_var = tk.StringVar()
         self.excel_file_var.set(self.config_manager.get("excel_file_path", "No file selected"))
         
@@ -341,7 +489,10 @@ class AuxDataEditFrame(ttk.Frame):
                 
                 # Load saved value if available first
                 saved_key = f"aux_data_{i+1}"
-                if saved_key in saved_values:
+                if i == 2:
+                    entry.insert(0, "Auto (EXISTING/PROPOSED)")
+                    entry.config(state="readonly")
+                elif saved_key in saved_values:
                     entry.insert(0, saved_values[saved_key])
                 
                 # Add checkbox for Aux Data 1 auto-fill
@@ -366,8 +517,9 @@ class AuxDataEditFrame(ttk.Frame):
                         entry.insert(0, "(Will auto-fill from Excel)")
                 
                 # Bind to auto-save when value changes
-                entry.bind('<FocusOut>', self.auto_save_values)
-                entry.bind('<KeyRelease>', self.auto_save_values)
+                if i != 2:
+                    entry.bind('<FocusOut>', self.auto_save_values)
+                    entry.bind('<KeyRelease>', self.auto_save_values)
                 
                 self.aux_entries.append(entry)
             else:
@@ -387,6 +539,13 @@ class AuxDataEditFrame(ttk.Frame):
             self.excel_file_var.set(file_path)
             self.config_manager.set("excel_file_path", file_path)
     
+    def get_excel_path(self) -> str:
+        """Return the currently selected Excel file path."""
+        value = self.excel_file_var.get()
+        if value and value != "No file selected":
+            return value
+        return self.config_manager.get("excel_file_path", "")
+    
     def auto_save_values(self, event=None):
         """Auto-save current values when they change."""
         values = {}
@@ -394,6 +553,12 @@ class AuxDataEditFrame(ttk.Frame):
         for i, (field_name, description, is_editable) in enumerate(self.aux_fields):
             if is_editable:
                 entry = self.aux_entries[entry_index]
+                if i == 2:
+                    entry_index += 1
+                    continue
+                if i == 2:
+                    entry_index += 1
+                    continue
                 if hasattr(entry, 'get'):  # Make sure it's an Entry widget
                     value = entry.get().strip()
                     values[f"aux_data_{i+1}"] = value
@@ -603,12 +768,21 @@ class AuxDataEditFrame(ttk.Frame):
 class ProcessingFrame(ttk.Frame):
     """Frame for processing controls and output."""
     
-    def __init__(self, parent, config_manager: PPLXConfigManager, file_frame: PPLXFileListFrame, aux_frame: AuxDataEditFrame):
+    def __init__(
+        self,
+        parent,
+        config_manager: PPLXConfigManager,
+        existing_frame: PPLXFileListFrame,
+        proposed_frame: PPLXFileListFrame,
+        aux_frame: AuxDataEditFrame
+    ):
         super().__init__(parent)
         self.config_manager = config_manager
-        self.file_frame = file_frame
+        self.existing_frame = existing_frame
+        self.proposed_frame = proposed_frame
         self.aux_frame = aux_frame
         self.is_processing = False
+        self.active_output_root = ""
         
         self.setup_ui()
     
@@ -624,7 +798,7 @@ class ProcessingFrame(ttk.Frame):
         
         info_text = ttk.Label(
             info_frame, 
-            text="Modified files will be saved to 'Modified PPLX' folder\ninside the selected folder",
+            text="Processed files will be saved under 'Processed PPLX' in your Downloads folder\nwith separate 'EXISTING' and 'PROPOSED' folders",
             foreground="gray",
             justify="center"
         )
@@ -646,14 +820,6 @@ class ProcessingFrame(ttk.Frame):
         self.output_text = scrolledtext.ScrolledText(output_frame, height=10, wrap=tk.WORD)
         self.output_text.pack(fill="both", expand=True)
     
-    def get_output_directory(self) -> str:
-        """Get the output directory based on the selected folder."""
-        if hasattr(self.file_frame, 'current_folder') and self.file_frame.current_folder:
-            return os.path.join(self.file_frame.current_folder, "Modified PPLX")
-        else:
-            # Fallback to current directory if no folder selected
-            return os.path.join(os.getcwd(), "Modified PPLX")
-    
     def log_message(self, message: str):
         """Add a message to the output log."""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -668,14 +834,18 @@ class ProcessingFrame(ttk.Frame):
         if self.is_processing:
             return
         
-        files = self.file_frame.get_files()
-        if not files:
-            self.log_message("ERROR: Please select a folder containing PPLX files")
+        existing_files = self.existing_frame.get_files()
+        proposed_files = self.proposed_frame.get_files()
+        if not existing_files and not proposed_files:
+            self.log_message("ERROR: Please select at least one folder containing PPLX files")
             return
         
-        # Check if folder is selected
-        if not hasattr(self.file_frame, 'current_folder') or not self.file_frame.current_folder:
-            self.log_message("ERROR: Please select a folder first")
+        excel_path = ""
+        if hasattr(self.aux_frame, "get_excel_path") and callable(getattr(self.aux_frame, "get_excel_path")):
+            excel_path = self.aux_frame.get_excel_path()
+        if not excel_path or not os.path.exists(excel_path):
+            self.log_message("ERROR: Please select a valid Excel file before processing.")
+            messagebox.showerror("Excel Required", "Please select a valid Excel file in the Aux Data panel before processing.")
             return
         
         aux_values = self.aux_frame.get_aux_values()
@@ -689,25 +859,61 @@ class ProcessingFrame(ttk.Frame):
         # Clear the output log
         self.output_text.delete(1.0, tk.END)
         
+        # Prepare category data for processing
+        category_data = [
+            {
+                "name": "EXISTING",
+                "files": existing_files,
+                "source_folder": self.existing_frame.get_source_path()
+            },
+            {
+                "name": "PROPOSED",
+                "files": proposed_files,
+                "source_folder": self.proposed_frame.get_source_path()
+            }
+        ]
+        
+        # Determine output root on Desktop
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        downloads_dir = Path.home() / "Downloads"
+        processed_base = downloads_dir / "Processed PPLX"
+        processed_base.mkdir(parents=True, exist_ok=True)
+        prefix = "O-Calcs"
+        if excel_path:
+            base_name = os.path.basename(excel_path)
+            prefix_candidate = base_name.split(" ")[0].strip()
+            if not prefix_candidate:
+                prefix_candidate = Path(base_name).stem
+            if prefix_candidate:
+                prefix = f"{prefix_candidate}_O-Calcs"
+        
+        output_root = processed_base / f"{prefix}_{timestamp}"
+        self.active_output_root = str(output_root)
+        
         # Start processing in a separate thread
-        thread = threading.Thread(target=self.process_files, args=(files, aux_values))
+        thread = threading.Thread(
+            target=self.process_files,
+            args=(category_data, aux_values, self.active_output_root)
+        )
         thread.daemon = True
         thread.start()
     
-    def process_files(self, files: List[str], aux_values: Dict[int, str]):
-        """Process the selected files with SCID filtering."""
+    def process_files(self, category_data: List[Dict], aux_values: Dict[int, str], output_root: str):
+        """Process the selected files for each category with SCID filtering."""
         try:
-            output_dir = self.get_output_directory()
-            
-            # Create output directory if it doesn't exist
-            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(output_root, exist_ok=True)
             
             # Load Excel data and get valid SCIDs
             excel_data = self.aux_frame.load_excel_data(log_callback=self.log_message)
             valid_scids = set(excel_data.keys()) if excel_data else set()
             
-            self.log_message(f"Starting processing of {len(files)} files")
-            self.log_message(f"Output directory: {output_dir}")
+            total_files = sum(len(category["files"]) for category in category_data)
+            if total_files == 0:
+                self.log_message("No PPLX files found to process.")
+                return
+            
+            self.log_message(f"Starting processing of {total_files} files across categories")
+            self.log_message(f"Output root directory: {output_root}")
             
             if excel_data:
                 self.log_message(f"{len(valid_scids)} non-underground poles found in Excel data")
@@ -715,189 +921,273 @@ class ProcessingFrame(ttk.Frame):
                 self.log_message("No Excel data loaded - processing all files")
             
             if aux_values:
-                self.log_message(f"User Aux Data values: {aux_values}")
+                self.log_message(f"User Aux Data values (shared): {aux_values}")
             
-            successful = 0
-            failed = 0
-            skipped = 0
+            processed_count = 0
+            summary: Dict[str, Dict[str, object]] = {}
             
-            # Prepare CSV data for log file
-            csv_data = []
-            
-            for i, file_path in enumerate(files):
-                try:
-                    # Update progress
-                    progress = (i / len(files)) * 100
-                    self.progress_var.set(progress)
-                    
+            for category in category_data:
+                name = category["name"]
+                files = category["files"]
+                source_folder = category.get("source_folder") or ""
+                
+                output_dir = os.path.join(output_root, name)
+                os.makedirs(output_dir, exist_ok=True)
+                
+                summary[name] = {
+                    "successful": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "csv_path": "",
+                    "output_dir": output_dir
+                }
+                
+                if not files:
+                    self.log_message(f"\nCategory: {name} (no files selected, directory created)")
+                    continue
+                
+                condition_value = name
+                category_aux_values = {k: v for k, v in aux_values.items() if k != 3}
+                csv_data = []
+                
+                self.log_message(f"\nCategory: {name}")
+                if source_folder:
+                    self.log_message(f" Source: {source_folder}")
+                self.log_message(f" Processing {len(files)} file{'s' if len(files) != 1 else ''}")
+                
+                ignore_keywords = getattr(self.aux_frame, "ignore_scid_keywords", "")
+                
+                auto_fill_aux1_enabled = False
+                auto_fill_var = getattr(self.aux_frame, "auto_fill_aux1_var", None)
+                if auto_fill_var is not None:
+                    try:
+                        auto_fill_aux1_enabled = bool(auto_fill_var.get())
+                    except Exception:
+                        auto_fill_aux1_enabled = False
+                
+                def _get_str_var(name):
+                    var = getattr(self.aux_frame, name, None)
+                    if var is None:
+                        return ""
+                    try:
+                        return var.get()
+                    except Exception:
+                        return ""
+                
+                keyword_payload = {
+                    "comm_keywords": [kw.strip() for kw in _get_str_var("comm_owners_var").split(",") if kw.strip()],
+                    "power_keywords": [kw.strip() for kw in _get_str_var("power_owners_var").split(",") if kw.strip()],
+                    "pco_keywords": [kw.strip() for kw in _get_str_var("pco_keywords_var").split(",") if kw.strip()],
+                    "aux5_keywords": [kw.strip() for kw in _get_str_var("aux5_keywords_var").split(",") if kw.strip()]
+                }
+                
+                def process_single_file(task):
+                    """Process a single file in a worker thread."""
+                    index, file_path = task
+                    logs = []
+                    csv_row = None
+                    status = "success"
                     filename = os.path.basename(file_path)
                     
-                    # Extract SCID from filename (for Excel lookup - no keyword filtering)
-                    scid = extract_scid_from_filename(filename)
-                    
-                    # Extract pole number from original filename and apply SCID keyword filtering (for filename generation)
-                    pole_number = extract_scid_from_filename(filename)
-                    clean_pole_number = clean_scid_keywords(pole_number, getattr(self.aux_frame, "ignore_scid_keywords", ""))
-                    
-                    # Check if SCID is valid (if Excel data is loaded)
-                    if excel_data and scid not in valid_scids:
-                        self.log_message(f"Skipping {filename}: SCID '{scid}' not found in Excel data")
-                        skipped += 1
-                        continue
-                    
-                    self.log_message(f"Processing: {filename} (SCID: {scid}, Pole Number: {pole_number} -> {clean_pole_number})")
-                    
-                    # Load the file
-                    handler = PPLXHandler(file_path)
-                    
-                    # Apply user-entered Aux Data modifications
-                    if aux_values:
-                        for aux_num, value in aux_values.items():
-                            success = handler.set_aux_data(aux_num, value)
-                            if success:
-                                self.log_message(f"  Set Aux Data {aux_num}: {value}")
-                            else:
-                                self.log_message(f"  Warning: Could not set Aux Data {aux_num}")
-                    
-                    # Apply auto-filled data from Excel
-                    if excel_data and scid in excel_data:
-                        row_data = excel_data[scid]
+                    try:
+                        scid = extract_scid_from_filename(filename)
+                        pole_number = extract_scid_from_filename(filename)
+                        clean_pole_number = clean_scid_keywords(
+                            pole_number,
+                            ignore_keywords
+                        )
                         
-                        # Auto-fill Aux Data 1 (Pole Owner) if checkbox is checked
-                        if hasattr(self.aux_frame, 'auto_fill_aux1_var') and self.aux_frame.auto_fill_aux1_var.get():
-                            pole_owner = row_data.get('pole_tag_company', '')
-                            if pole_owner:
-                                handler.set_aux_data(1, pole_owner)
-                                self.log_message(f"  Auto-filled Aux Data 1: {pole_owner}")
+                        if excel_data and scid not in valid_scids:
+                            logs.append(f"Skipping {filename}: SCID '{scid}' not found in Excel data")
+                            return {
+                                "index": index,
+                                "status": "skipped",
+                                "logs": logs,
+                                "csv_row": None
+                            }
                         
-                        # Auto-fill Aux Data 2 (Pole Tag) from pole_tag_tagtext
-                        pole_tag = row_data.get('pole_tag_tagtext', f"POLE_{scid}")
-                        handler.set_aux_data(2, pole_tag)
-                        self.log_message(f"  Auto-filled Aux Data 2: {pole_tag}")
+                        logs.append(
+                            f"Processing: {filename} (SCID: {scid}, Pole Number: {pole_number} -> {clean_pole_number})"
+                        )
                         
-                        # Analyze mr_note for Aux Data 4 and 5
-                        mr_note = row_data.get('mr_note', '')
-                        aux_data_4, aux_data_5 = self.aux_frame.analyze_mr_note(mr_note)
+                        handler = PPLXHandler(file_path)
                         
-                        # Auto-fill Aux Data 4 (Make Ready Type)
-                        handler.set_aux_data(4, aux_data_4)
-                        self.log_message(f"  Auto-filled Aux Data 4: {aux_data_4}")
-                        if mr_note:
-                            self.log_message(f"    Based on mr_note: {mr_note[:50]}{'...' if len(mr_note) > 50 else ''}")
+                        if category_aux_values:
+                            for aux_num, value in category_aux_values.items():
+                                success = handler.set_aux_data(aux_num, value)
+                                if success:
+                                    logs.append(f"  Set Aux Data {aux_num}: {value}")
+                                else:
+                                    logs.append(f"  Warning: Could not set Aux Data {aux_num}")
                         
-                        # Auto-fill Aux Data 5 (Proposed Riser)
-                        handler.set_aux_data(5, aux_data_5)
-                        self.log_message(f"  Auto-filled Aux Data 5: {aux_data_5}")
+                        handler.set_aux_data(3, condition_value)
+                        logs.append(f"  Auto-set Aux Data 3 (Condition): {condition_value}")
+                        
+                        pole_tag = f"POLE_{scid}"
+                        mr_note = ""
+                        
+                        if excel_data and scid in excel_data:
+                            row_data = excel_data[scid]
+                            
+                            if auto_fill_aux1_enabled:
+                                pole_owner = row_data.get('pole_tag_company', '')
+                                if pole_owner:
+                                    handler.set_aux_data(1, pole_owner)
+                                    logs.append(f"  Auto-filled Aux Data 1: {pole_owner}")
+                            
+                            pole_tag = row_data.get('pole_tag_tagtext', pole_tag)
+                            handler.set_aux_data(2, pole_tag)
+                            logs.append(f"  Auto-filled Aux Data 2: {pole_tag}")
+                            
+                            mr_note = row_data.get('mr_note', '')
+                            aux_data_4, aux_data_5 = analyze_mr_note_for_aux_data(
+                                mr_note,
+                                comm_keywords=keyword_payload["comm_keywords"],
+                                power_keywords=keyword_payload["power_keywords"],
+                                pco_keywords=keyword_payload["pco_keywords"],
+                                aux5_keywords=keyword_payload["aux5_keywords"]
+                            )
+                            
+                            handler.set_aux_data(4, aux_data_4)
+                            logs.append(f"  Auto-filled Aux Data 4: {aux_data_4}")
+                            if mr_note:
+                                logs.append(
+                                    f"    Based on mr_note: {mr_note[:50]}{'...' if len(mr_note) > 50 else ''}"
+                                )
+                            
+                            handler.set_aux_data(5, aux_data_5)
+                            logs.append(f"  Auto-filled Aux Data 5: {aux_data_5}")
+                        else:
+                            handler.set_aux_data(2, pole_tag)
+                        
+                        if excel_data and scid in excel_data:
+                            pole_tag = excel_data[scid].get('pole_tag_tagtext', pole_tag)
+                            mr_note = excel_data[scid].get('mr_note', mr_note)
+                        
+                        final_aux_data = handler.get_aux_data()
+                        
+                        aux_data_4 = final_aux_data.get('Aux Data 4', '')
+                        if aux_data_4 == 'PCO':
+                            clean_pole_number = f"{clean_pole_number} PCO"
+                            logs.append(
+                                f"  Aux Data 4 is 'PCO', appending to pole number: {clean_pole_number}"
+                            )
+                        
+                        if aux_data_4 == 'PCO':
+                            clean_pole_number_safe = ''.join(
+                                c for c in clean_pole_number if c.isalnum() or c in '-_. '
+                            )
+                        else:
+                            clean_pole_number_safe = ''.join(
+                                c for c in clean_pole_number if c.isalnum() or c in '-_'
+                            )
+                        clean_pole_tag = ''.join(c for c in str(pole_tag) if c.isalnum() or c in '-_')
+                        clean_condition = ''.join(c for c in str(condition_value) if c.isalnum() or c in '-_')
+                        
+                        new_filename = f"{clean_pole_number_safe}_{clean_pole_tag}_{clean_condition}.pplx"
+                        output_file = os.path.join(output_dir, new_filename)
+                        
+                        handler.set_pole_attribute('Pole Number', clean_pole_number)
+                        logs.append(f"  Set Pole Number: {clean_pole_number}")
+                        
+                        description_override = os.path.splitext(new_filename)[0]
+                        handler.set_pole_attribute('DescriptionOverride', description_override)
+                        logs.append(f"  Set DescriptionOverride: {description_override}")
+                        
+                        handler.save_file(output_file)
+                        logs.append(f"  Saved: {os.path.basename(output_file)}")
+                        
+                        csv_row = {
+                            'File Name': filename,
+                            'MR Note': mr_note,
+                            'Aux Data 1': final_aux_data.get('Aux Data 1', 'Unset'),
+                            'Aux Data 2': final_aux_data.get('Aux Data 2', 'Unset'),
+                            'Aux Data 3': final_aux_data.get('Aux Data 3', 'Unset'),
+                            'Aux Data 4': final_aux_data.get('Aux Data 4', 'Unset'),
+                            'Aux Data 5': final_aux_data.get('Aux Data 5', 'Unset')
+                        }
                     
-                    # Get pole tag from Excel or user input
-                    pole_tag = "Unknown"
-                    if excel_data and scid in excel_data:
-                        pole_tag = excel_data[scid].get('pole_tag_tagtext', pole_tag)
+                    except Exception as e:
+                        logs.append(f"  Error processing {filename}: {str(e)}")
+                        status = "failed"
                     
-                    # Get condition from user input
-                    condition = aux_values.get(3, "Unknown")  # Aux Data 3
-                    
-                    # Get MR Note from Excel data
-                    mr_note = ""
-                    if excel_data and scid in excel_data:
-                        mr_note = excel_data[scid].get('mr_note', '')
-                    
-                    # Get final Aux Data values from the handler
-                    final_aux_data = handler.get_aux_data()
-                    
-                    # Check if Aux Data 4 is 'PCO' and append to pole number if needed
-                    aux_data_4 = final_aux_data.get('Aux Data 4', '')
-                    if aux_data_4 == 'PCO':
-                        clean_pole_number = f"{clean_pole_number} PCO"
-                        self.log_message(f"  Aux Data 4 is 'PCO', appending to pole number: {clean_pole_number}")
-                    
-                    # Clean values for filename (remove invalid characters, but allow spaces for PCO)
-                    # For filename, we'll allow spaces when PCO is present
-                    if aux_data_4 == 'PCO':
-                        # Allow spaces and alphanumeric characters, dots, hyphens, underscores for PCO format
-                        clean_pole_number_safe = ''.join(c for c in clean_pole_number if c.isalnum() or c in '-_. ')
-                    else:
-                        clean_pole_number_safe = ''.join(c for c in clean_pole_number if c.isalnum() or c in '-_')
-                    clean_pole_tag = ''.join(c for c in str(pole_tag) if c.isalnum() or c in '-_')
-                    clean_condition = ''.join(c for c in str(condition) if c.isalnum() or c in '-_')
-                    
-                    # Create the new filename using cleaned pole number
-                    new_filename = f"{clean_pole_number_safe}_{clean_pole_tag}_{clean_condition}.pplx"
-                    output_file = os.path.join(output_dir, new_filename)
-                    
-                    # Set Pole Number from cleaned pole number (with PCO if applicable)
-                    handler.set_pole_attribute('Pole Number', clean_pole_number)
-                    self.log_message(f"  Set Pole Number: {clean_pole_number}")
-                    
-                    # Set DescriptionOverride to match the output filename (without extension)
-                    description_override = os.path.splitext(new_filename)[0]  # Remove .pplx extension
-                    handler.set_pole_attribute('DescriptionOverride', description_override)
-                    self.log_message(f"  Set DescriptionOverride: {description_override}")
-                    
-                    # Save the modified file (overwrite if exists)
-                    handler.save_file(output_file)
-                    self.log_message(f"  Saved: {os.path.basename(output_file)}")
-                    
-                    # Add data to CSV
-                    csv_row = {
-                        'File Name': filename,
-                        'MR Note': mr_note,
-                        'Aux Data 1': final_aux_data.get('Aux Data 1', 'Unset'),
-                        'Aux Data 2': final_aux_data.get('Aux Data 2', 'Unset'),
-                        'Aux Data 3': final_aux_data.get('Aux Data 3', 'Unset'),
-                        'Aux Data 4': final_aux_data.get('Aux Data 4', 'Unset'),
-                        'Aux Data 5': final_aux_data.get('Aux Data 5', 'Unset')
+                    return {
+                        "index": index,
+                        "status": status,
+                        "logs": logs,
+                        "csv_row": csv_row
                     }
-                    csv_data.append(csv_row)
-                    
-                    successful += 1
-                    
-                except Exception as e:
-                    self.log_message(f"  Error processing {filename}: {str(e)}")
-                    failed += 1
+                
+                max_workers = min(8, max(1, (os.cpu_count() or 1)))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    for result in executor.map(process_single_file, enumerate(files)):
+                        for entry in result["logs"]:
+                            self.log_message(entry)
+                        
+                        status = result["status"]
+                        if status == "success":
+                            summary[name]["successful"] += 1
+                            if result["csv_row"]:
+                                csv_data.append(result["csv_row"])
+                        elif status == "failed":
+                            summary[name]["failed"] += 1
+                        elif status == "skipped":
+                            summary[name]["skipped"] += 1
+                        
+                        processed_count += 1
+                        progress = (processed_count / total_files) * 100
+                        self.progress_var.set(progress)
+                
+                if csv_data:
+                    csv_file_path = os.path.join(output_dir, "log.csv")
+                    try:
+                        with open(csv_file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                            fieldnames = [
+                                'File Name',
+                                'MR Note',
+                                'Aux Data 1',
+                                'Aux Data 2',
+                                'Aux Data 3',
+                                'Aux Data 4',
+                                'Aux Data 5'
+                            ]
+                            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                            writer.writeheader()
+                            writer.writerows(csv_data)
+                        
+                        self.log_message(f"{name} CSV log file saved: {csv_file_path}")
+                        summary[name]["csv_path"] = csv_file_path
+                    except Exception as e:
+                        self.log_message(f"Error saving {name} CSV log file: {str(e)}")
             
-            # Update progress to 100%
             self.progress_var.set(100)
             
-            # Generate CSV log file
-            if csv_data:
-                csv_file_path = os.path.join(output_dir, "log.csv")
-                try:
-                    with open(csv_file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                        fieldnames = ['File Name', 'MR Note', 'Aux Data 1', 'Aux Data 2', 'Aux Data 3', 'Aux Data 4', 'Aux Data 5']
-                        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                        writer.writeheader()
-                        writer.writerows(csv_data)
-                    
-                    self.log_message(f"CSV log file saved: {csv_file_path}")
-                except Exception as e:
-                    self.log_message(f"Error saving CSV log file: {str(e)}")
-            
-            # Final summary
             self.log_message(f"\nProcessing complete!")
-            self.log_message(f"Successful: {successful}")
-            self.log_message(f"Failed: {failed}")
-            if excel_data:
-                self.log_message(f"Skipped (SCID not in Excel): {skipped}")
-            self.log_message(f"Output directory: {output_dir}")
+            for name, stats in summary.items():
+                self.log_message(
+                    f"{name} - Successful: {stats['successful']}, Failed: {stats['failed']}, Skipped: {stats['skipped']}"
+                )
+                if stats.get("csv_path"):
+                    self.log_message(f"{name} CSV: {stats['csv_path']}")
+                self.log_message(f"{name} Output: {stats['output_dir']}")
             
-            # Log completion summary
-            if failed == 0 and skipped == 0:
-                self.log_message(f"SUCCESS: All {successful} files processed successfully!")
-            elif failed == 0:
-                self.log_message(f"COMPLETED: {successful} files processed successfully, {skipped} skipped (SCID not in Excel data)")
-            else:
-                message = f"COMPLETED: {successful} files processed successfully, {failed} failed"
-                if skipped > 0:
-                    message += f", {skipped} skipped (SCID not in Excel data)"
-                self.log_message(message)
+            self.log_message(f"Output root directory: {output_root}")
+        
+            try:
+                if os.name == "nt":
+                    os.startfile(output_root)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", output_root])
+                else:
+                    subprocess.Popen(["xdg-open", output_root])
+            except Exception as open_err:
+                self.log_message(f"Info: Unable to open output folder automatically: {open_err}")
         
         except Exception as e:
             self.log_message(f"Critical error: {str(e)}")
             messagebox.showerror("Error", f"Processing failed: {str(e)}")
         
         finally:
-            # Re-enable the process button
             self.is_processing = False
             self.process_button.config(state="normal", text="Process Files")
 
@@ -910,7 +1200,6 @@ class PPLXGUIApp:
         self.root = tk.Tk()
         self.setup_window()
         self.setup_ui()
-        self.setup_menu()
     
     def setup_window(self):
         """Setup the main window."""
@@ -942,15 +1231,18 @@ class PPLXGUIApp:
         left_panel = ttk.Frame(paned)
         paned.add(left_panel, weight=1)
         
-        # File list frame
-        self.file_frame = PPLXFileListFrame(left_panel, self.config_manager)
-        self.file_frame.pack(fill="both", expand=True, pady=(0, 10))
+        # Existing and Proposed folder selectors side by side
+        file_lists_container = ttk.Frame(left_panel)
+        file_lists_container.pack(fill="both", expand=True, pady=(0, 10))
+        file_lists_container.columnconfigure(0, weight=1)
+        file_lists_container.columnconfigure(1, weight=1)
+        file_lists_container.rowconfigure(0, weight=1)
         
-        # Auto-load last used folder
-        last_folder = self.config_manager.get("last_folder_path", "")
-        if last_folder and os.path.exists(last_folder):
-            self.file_frame.current_folder = last_folder
-            self.file_frame.load_folder_files()
+        self.existing_frame = PPLXFileListFrame(file_lists_container, self.config_manager, category="EXISTING")
+        self.existing_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        
+        self.proposed_frame = PPLXFileListFrame(file_lists_container, self.config_manager, category="PROPOSED")
+        self.proposed_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         
         # Aux data editing frame
         self.aux_frame = AuxDataEditFrame(left_panel, self.config_manager)
@@ -960,24 +1252,18 @@ class PPLXGUIApp:
         right_panel = ttk.Frame(paned)
         paned.add(right_panel, weight=1)
         
-        self.processing_frame = ProcessingFrame(right_panel, self.config_manager, self.file_frame, self.aux_frame)
+        self.processing_frame = ProcessingFrame(
+            right_panel,
+            self.config_manager,
+            self.existing_frame,
+            self.proposed_frame,
+            self.aux_frame
+        )
         self.processing_frame.pack(fill="both", expand=True)
-    
-    def setup_menu(self):
-        """Setup minimal menu bar."""
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        
-        # Help menu only
-        help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="About", command=self.show_about)
-    
-
     
     def show_batch_report(self):
         """Show batch report dialog."""
-        files = self.file_frame.get_files()
+        files = self.existing_frame.get_files() + self.proposed_frame.get_files()
         if not files:
             messagebox.showwarning("No Files", "Please select PPLX files first")
             return
@@ -1021,7 +1307,7 @@ class PPLXGUIApp:
     
     def export_structure(self):
         """Export XML structure of selected file."""
-        files = self.file_frame.get_files()
+        files = self.existing_frame.get_files() + self.proposed_frame.get_files()
         if not files:
             messagebox.showwarning("No Files", "Please select a PPLX file first")
             return
@@ -1044,27 +1330,16 @@ class PPLXGUIApp:
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export structure:\n{str(e)}")
     
-    def show_about(self):
-        """Show about dialog."""
-        about_text = """PPLX File Editor v1.0
-
-A GUI application for editing PPLX XML files used in pole line engineering.
-
-Features:
-• Edit Aux Data fields (1-8)
-• Batch processing capabilities
-• Automatic output organization
-• Path memory and recent files
-• Structure analysis and reporting
-
-Created for pole line engineering workflow optimization."""
-        
-        messagebox.showinfo("About PPLX File Editor", about_text)
-    
     def on_closing(self):
         """Handle application closing."""
         # Save window geometry
         self.config_manager.set("window_geometry", self.root.geometry())
+        
+        # Clean up any temporary data
+        if hasattr(self, "existing_frame"):
+            self.existing_frame.cleanup_temp_dir()
+        if hasattr(self, "proposed_frame"):
+            self.proposed_frame.cleanup_temp_dir()
         
         # Close the application
         self.root.destroy()

@@ -3,3 +3,4 @@ build/
 pplx_files/
 __pycache__/
 Test Files/
+log.csv

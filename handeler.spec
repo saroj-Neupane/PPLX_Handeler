@@ -15,7 +15,7 @@ icon_file = os.path.join(current_dir, 'handeler.ico')
 datas = []
 
 # Configuration files
-config_files = ['pplx_gui_config.json', 'pplx_structure_sample.json']
+config_files = ['config.json', 'pplx_structure_sample.json']
 for config_file in config_files:
     config_path = os.path.join(current_dir, config_file)
     if os.path.exists(config_path):

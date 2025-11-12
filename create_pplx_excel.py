@@ -132,7 +132,7 @@ def load_excel_data(excel_file_path):
     return mr_note_mapping, full_data_mapping
 
 
-def load_keyword_settings(config_filename="pplx_gui_config.json"):
+def load_keyword_settings(config_filename="config.json"):
     """
     Load keyword overrides from the GUI configuration file, if available.
     
