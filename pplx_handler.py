@@ -6,7 +6,7 @@ This script allows you to read, analyze, and edit pplx files which are XML files
 containing pole line engineering data. It provides specific functionality to edit
 Aux Data fields and other attributes.
 
-Author: AI Assistant
+Author: Saroj Neupane
 """
 
 import xml.etree.ElementTree as ET
@@ -161,7 +161,16 @@ class PPLXHandler:
                     print(f"Updated {aux_data_name}: '{old_value}' -> '{new_value}'")
                     success = True
                     break
-            
+
+            # If Aux Data field not found, create it
+            if not success:
+                aux_element = ET.SubElement(attributes, 'VALUE')
+                aux_element.set('NAME', aux_data_name)
+                aux_element.set('TYPE', 'String')
+                aux_element.text = new_value
+                print(f"Created {aux_data_name}: '{new_value}'")
+                success = True
+
             # If this is Aux Data 1, also update the Owner field
             if aux_data_number == 1 and success:
                 for value in attributes.findall('VALUE'):

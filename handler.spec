@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_data_files
 # Paths
 current_dir = os.getcwd()
 main_script = os.path.join(current_dir, 'pplx_gui.py')
-icon_file = os.path.join(current_dir, 'handeler.ico')
+icon_file = os.path.join(current_dir, 'handler.ico')
 
 # Data files to include
 datas = []
@@ -35,7 +35,7 @@ hiddenimports = [
     'tkinter.filedialog',
     'tkinter.messagebox',
     'tkinter.scrolledtext',
-    'pplx_handeler',
+    'pplx_handler',
     'pplx_config',
     'openpyxl',
     'openpyxl.workbook',
@@ -82,7 +82,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PPLX_Handeler',
+    name='PPLX_Handler',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -1,7 +1,7 @@
 {
   "last_input_directory": "",
   "last_output_directory": "",
-  "window_geometry": "1536x889+-13+-19",
+  "window_geometry": "1536x889+39+-16",
   "recent_files": [],
   "default_aux_values": [
     "",
@@ -14,14 +14,18 @@
     ""
   ],
   "last_existing_folder_path": "C:\\Users\\nsaro\\Downloads\\MNMW031_Export.zip",
-  "last_proposed_folder_path": "C:\\Users\\nsaro\\Downloads\\MNMW031_Export (1).zip",
+  "last_proposed_folder_path": "C:/Users/nsaro/Desktop/NEOM147_O-Calcs_20260213_151424 - Copy/PROPOSED",
   "comm_owners": "CATV, FIBER, TELCO, METRONET",
-  "power_owners": "XCEL",
+  "power_owners": "OPPD",
   "pco_keywords": "REPLACING EXISTING, POLE",
   "aux5_keywords": "METRONET RISER",
   "last_aux_values": {
-    "aux_data_1": ""
+    "aux_data_1": "OPPD",
+    "aux_data_2": "NO TAG"
   },
-  "auto_fill_aux1": true,
-  "excel_file_path": "C:/Users/nsaro/Downloads/MNMW031 Nodes-Sections-Connections XLSX.xlsx"
+  "auto_fill_aux1": false,
+  "excel_file_path": "C:/Users/nsaro/Downloads/NEOM147 Nodes-Sections-Connections XLSX.xlsx",
+  "auto_fill_aux2": false,
+  "0": true,
+  "1": false
 }

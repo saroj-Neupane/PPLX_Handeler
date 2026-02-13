@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Bash(ls:*)","Bash(python:*)","Bash(where:*)","Bash(python3:*)","Bash(dir:*)","Bash(py:*)","Bash(bash -c:*)","Bash(cd:*)","Bash(powershell:*)","Bash(python.exe:*)"]}}
