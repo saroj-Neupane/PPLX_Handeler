@@ -141,7 +141,12 @@ class PPLXConfigManager:
             "last_output_directory": "",
             "window_geometry": "1000x700",
             "recent_files": [],
-            "default_aux_values": [""] * 8
+            "default_aux_values": [""] * 8,
+            "configurations": [
+                {"name": "Default", "power_label": "POWER"},
+                {"name": "OPPD", "power_label": "OPPD"}
+            ],
+            "selected_config": "OPPD"
         }
         
         try:
@@ -152,6 +157,14 @@ class PPLXConfigManager:
                 for key, value in default_config.items():
                     if key not in config:
                         config[key] = value
+                # Ensure Default and OPPD configs exist
+                configs = config.get("configurations", [])
+                if isinstance(configs, list):
+                    names = [c.get("name") for c in configs if isinstance(c, dict)]
+                    for req in [{"name": "Default", "power_label": "POWER"}, {"name": "OPPD", "power_label": "OPPD"}]:
+                        if req["name"] not in names:
+                            configs = list(configs) + [req]
+                            config["configurations"] = configs
                 return config
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -452,6 +465,20 @@ class AuxDataEditFrame(ttk.Frame):
     
     def setup_ui(self):
         """Setup the Aux Data editing UI."""
+        # Configuration dropdown (top)
+        config_frame = ttk.Frame(self)
+        config_frame.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(config_frame, text="Configuration:").pack(side="left", padx=(0, 6))
+        self.config_var = tk.StringVar()
+        self.config_combo = ttk.Combobox(config_frame, textvariable=self.config_var, state="readonly", width=25)
+        self._refresh_config_combo()
+        saved = self.config_manager.get("selected_config", "OPPD")
+        names = list(self.config_combo["values"])
+        self.config_var.set(saved if saved in names else (names[0] if names else "OPPD"))
+        self.config_combo.pack(side="left", padx=(0, 4))
+        self.config_combo.bind("<<ComboboxSelected>>", self._on_config_selected)
+        ttk.Button(config_frame, text="Add Config...", command=self._add_config_dialog).pack(side="left", padx=(4, 0))
+        
         # Excel file selection (top of panel)
         excel_frame = ttk.Frame(self)
         excel_frame.pack(fill="x", padx=10, pady=(0, 12))
@@ -559,6 +586,65 @@ class AuxDataEditFrame(ttk.Frame):
                 auto_label = ttk.Label(row_frame, text="(Auto Filled)", foreground="gray", style="Gray.TLabel")
                 auto_label.pack(side="left", fill="x", expand=True, padx=(5, 0))
                 self.aux_entries.append(auto_label)
+    
+    def _refresh_config_combo(self):
+        """Refresh the configuration dropdown from config."""
+        configs = self.config_manager.get("configurations", [])
+        names = [c["name"] for c in configs if isinstance(c, dict)]
+        self.config_combo["values"] = names
+    
+    def _on_config_selected(self, event=None):
+        """Save selected config when user changes dropdown."""
+        val = self.config_var.get()
+        if val:
+            self.config_manager.set("selected_config", val)
+    
+    def _add_config_dialog(self):
+        """Open dialog to add a new configuration."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Add Configuration")
+        dialog.geometry("320x140")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Config Name:").pack(anchor="w", padx=15, pady=(15, 2))
+        name_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=name_var, width=35).pack(fill="x", padx=15, pady=(0, 10))
+        
+        ttk.Label(dialog, text="Power Label (replaces 'POWER' in Aux Data 4):").pack(anchor="w", padx=15, pady=(5, 2))
+        power_var = tk.StringVar(value="POWER")
+        ttk.Entry(dialog, textvariable=power_var, width=35).pack(fill="x", padx=15, pady=(0, 15))
+        
+        def do_add():
+            name = name_var.get().strip()
+            power = power_var.get().strip() or "POWER"
+            if not name:
+                messagebox.showwarning("Invalid", "Please enter a configuration name.", parent=dialog)
+                return
+            configs = self.config_manager.get("configurations", [])
+            if any(c.get("name") == name for c in configs if isinstance(c, dict)):
+                messagebox.showwarning("Duplicate", f"Configuration '{name}' already exists.", parent=dialog)
+                return
+            configs.append({"name": name, "power_label": power})
+            self.config_manager.set("configurations", configs)
+            self._refresh_config_combo()
+            self.config_var.set(name)
+            self.config_manager.set("selected_config", name)
+            dialog.destroy()
+        
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+        ttk.Button(btn_frame, text="Add", command=do_add).pack(side="right", padx=(5, 0))
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side="right")
+    
+    def get_selected_config_power_label(self) -> str:
+        """Return the power_label for the selected config (used for Aux Data 4 substitution)."""
+        selected = self.config_var.get()
+        configs = self.config_manager.get("configurations", [])
+        for c in configs:
+            if isinstance(c, dict) and c.get("name") == selected:
+                return c.get("power_label", "POWER")
+        return "POWER"
     
     def select_excel_file(self):
         """Select Excel file for data lookup."""
@@ -957,6 +1043,10 @@ class ProcessingFrame(ttk.Frame):
             if aux_values:
                 self.log_message(f"User Aux Data values (shared): {aux_values}")
             
+            power_label = self.aux_frame.get_selected_config_power_label()
+            if power_label != "POWER":
+                self.log_message(f"Aux Data 4: replacing POWER with '{power_label}'")
+            
             processed_count = 0
             summary: Dict[str, Dict[str, object]] = {}
             
@@ -1073,6 +1163,9 @@ class ProcessingFrame(ttk.Frame):
                                 pco_keywords=keyword_payload["pco_keywords"],
                                 aux5_keywords=keyword_payload["aux5_keywords"]
                             )
+                            # Replace POWER with config's power_label (e.g. OPPD) in Aux Data 4
+                            if power_label != "POWER":
+                                aux_data_4 = aux_data_4.replace("POWER", power_label)
 
                             _set_aux_data_with_log(handler, 4, aux_data_4, logs, "Auto-filled")
                             if mr_note:
@@ -1100,7 +1193,7 @@ class ProcessingFrame(ttk.Frame):
                         clean_pole_number_safe = _safe_filename_part(
                             clean_pole_number, ". " if aux_data_4 == "PCO" else ""
                         )
-                        clean_pole_tag = _safe_filename_part(pole_tag)
+                        clean_pole_tag = _safe_filename_part(pole_tag, " ")
                         clean_condition = _safe_filename_part(condition_value)
                         
                         new_filename = f"{clean_pole_number_safe}_{clean_pole_tag}_{clean_condition}.pplx"
