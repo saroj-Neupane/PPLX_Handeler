@@ -4,44 +4,70 @@ PyInstaller spec file for PPLX GUI Application
 """
 
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # Paths
 current_dir = os.getcwd()
-main_script = os.path.join(current_dir, 'pplx_gui.py')
-icon_file = os.path.join(current_dir, 'handler.ico')
+main_script = os.path.join(current_dir, "app.py")
+icon_file = os.path.join(current_dir, "assets", "handler.ico")
 
-# Data files to include
+# Data files: config folder (includes _active.json, state.json, OPPD.json), assets folder
 datas = []
 
-# Configuration files
-config_files = ['config.json', 'pplx_structure_sample.json']
-for config_file in config_files:
-    config_path = os.path.join(current_dir, config_file)
-    if os.path.exists(config_path):
-        datas.append((config_path, '.'))
+# Config folder
+config_dir = os.path.join(current_dir, "config")
+if os.path.isdir(config_dir):
+    datas.append((config_dir, "config"))
+
+# Assets (icon)
+assets_dir = os.path.join(current_dir, "assets")
+if os.path.isdir(assets_dir):
+    datas.append((assets_dir, "assets"))
+
+# Fallback: single icon file
+if os.path.exists(icon_file):
+    datas.append((icon_file, "assets"))
+
+# Optional: pplx_structure_sample.json if exists
+sample = os.path.join(current_dir, "pplx_structure_sample.json")
+if os.path.exists(sample):
+    datas.append((sample, "."))
 
 # Collect package data files
 try:
     import openpyxl
-    datas.extend(collect_data_files('openpyxl'))
+    datas.extend(collect_data_files("openpyxl"))
 except ImportError:
     pass
 
 # Hidden imports
 hiddenimports = [
-    'tkinter',
-    'tkinter.ttk',
-    'tkinter.filedialog',
-    'tkinter.messagebox',
-    'tkinter.scrolledtext',
-    'pplx_handler',
-    'pplx_config',
-    'openpyxl',
-    'openpyxl.workbook',
-    'openpyxl.worksheet',
-    'openpyxl.utils',
-]
+    "tkinter",
+    "tkinter.ttk",
+    "tkinter.filedialog",
+    "tkinter.messagebox",
+    "tkinter.scrolledtext",
+    "src",
+    "src.config",
+    "src.config.manager",
+    "src.core",
+    "src.core.handler",
+    "src.core.logic",
+    "src.core.utils",
+    "src.excel",
+    "src.excel.loader",
+    "src.excel.fill_details",
+    "src.gui",
+    "src.gui.app",
+    "src.gui.constants",
+    "src.gui.frames",
+    "src.gui.frames.file_list",
+    "src.gui.frames.aux_data",
+    "src.gui.frames.processing",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageTk",
+] + collect_submodules("openpyxl")
 
 # Analysis
 a = Analysis(
@@ -54,16 +80,15 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'matplotlib',
-        'scipy',
-        'PIL',
-        'cv2',
-        'sklearn',
-        'tensorflow',
-        'torch',
-        'jupyter',
-        'notebook',
-        'IPython',
+        "matplotlib",
+        "scipy",
+        "cv2",
+        "sklearn",
+        "tensorflow",
+        "torch",
+        "jupyter",
+        "notebook",
+        "IPython",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -82,7 +107,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PPLX_Handler',
+    name="PPLX_Handler",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -1,6 +1,9 @@
 dist/
 build/
 pplx_files/
+config/state.json
 __pycache__/
 Test Files/
 log.csv
+data/
+*.xlsx

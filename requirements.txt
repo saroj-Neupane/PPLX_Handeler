@@ -1,3 +1,6 @@
 # Excel file reading
 openpyxl>=3.0.0
-pandas>=1.3.0 
+pandas>=1.3.0
+
+# Icon display in UI
+Pillow>=9.0.0

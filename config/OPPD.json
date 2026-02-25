@@ -1,0 +1,11 @@
+{
+  "comm_owners": "CATV, FIBER, TELCO, METRONET",
+  "power_owners": "OPPD, SECONDARY, PRIMARY, NEUTRAL, STREET, TRANSFORMER",
+  "pco_keywords": "REPLACING EXISTING",
+  "aux5_keywords": "METRONET RISER, INSTALL RISER",
+  "configurations": [
+    {"name": "Default", "power_label": "POWER"},
+    {"name": "OPPD", "power_label": "OPPD"}
+  ],
+  "selected_config": "OPPD"
+}
