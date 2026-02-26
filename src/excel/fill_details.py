@@ -10,6 +10,8 @@ from pathlib import Path
 
 import xml.etree.ElementTree as ET
 
+from src.core.utils import parse_keywords
+
 try:
     import pandas as pd
     from openpyxl import Workbook
@@ -53,13 +55,6 @@ def extract_aux_data_from_pplx(pplx_file_path: str) -> dict:
 
 def load_keyword_settings(config_filename: str = None) -> tuple:
     """Load keyword overrides from config file in config/ folder."""
-    def parse_keywords(value):
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(kw).strip() for kw in value if str(kw).strip()]
-        return [kw.strip() for kw in str(value).split(",") if kw.strip()]
-
     root = Path(__file__).resolve().parents[2]
     config_name = config_filename or get_active_config_name()
     if not config_name.endswith(".json"):
@@ -74,8 +69,8 @@ def load_keyword_settings(config_filename: str = None) -> tuple:
                 with open(path, "r") as f:
                     config = json.load(f)
                 return (
-                    parse_keywords(config.get("comm_owners")) or [],
-                    parse_keywords(config.get("power_owners")) or [],
+                    parse_keywords(config.get("comm_keywords")) or [],
+                    parse_keywords(config.get("power_keywords")) or [],
                     parse_keywords(config.get("pco_keywords")) or [],
                     parse_keywords(config.get("aux5_keywords")) or [],
                 )

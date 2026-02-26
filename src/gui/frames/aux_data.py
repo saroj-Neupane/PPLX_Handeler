@@ -6,7 +6,6 @@ from typing import Dict, List
 import tkinter as tk
 from tkinter import ttk, filedialog
 
-from src.config.manager import get_available_configs
 from src.core.logic import analyze_mr_note_for_aux_data
 from src.core.utils import parse_keywords
 from src.excel.loader import load_excel_data
@@ -39,20 +38,6 @@ class AuxDataEditFrame(ttk.Frame):
 
     def setup_ui(self, toolbar_parent, excel_parent, keywords_parent, fields_parent):
         """Setup the Aux Data editing UI. Parents must be different to avoid pack/grid conflict."""
-        self.toolbar_frame = ttk.Frame(toolbar_parent)
-        self.toolbar_frame.columnconfigure(1, weight=1)
-        ttk.Label(self.toolbar_frame, text="Config:").grid(row=0, column=0, padx=(0, 4), sticky="w")
-        self.config_var = tk.StringVar()
-        self.config_combo = ttk.Combobox(
-            self.toolbar_frame, textvariable=self.config_var, state="readonly", width=16
-        )
-        self._refresh_config_combo()
-        saved = self.config_manager.config_name
-        names = list(self.config_combo["values"])
-        self.config_var.set(saved if saved in names else (names[0] if names else "OPPD"))
-        self.config_combo.grid(row=0, column=1, padx=(0, 12), sticky="w")
-        self.config_combo.bind("<<ComboboxSelected>>", self._on_config_selected)
-
         self.excel_frame = ttk.LabelFrame(excel_parent, text="Node-Section-Connection File", padding=8)
         self.excel_frame.columnconfigure(0, weight=1)
         self.excel_file_var = tk.StringVar()
@@ -64,28 +49,6 @@ class AuxDataEditFrame(ttk.Frame):
             row=0, column=1, padx=(4, 0)
         )
 
-        self.keywords_frame = ttk.LabelFrame(keywords_parent, text="Keywords", padding=8)
-        self.keywords_frame.columnconfigure(1, weight=1)
-        self.comm_owners_var = tk.StringVar(value=self.config_manager.get("comm_owners", ""))
-        self.power_owners_var = tk.StringVar(value=self.config_manager.get("power_owners", ""))
-        self.pco_keywords_var = tk.StringVar(value=self.config_manager.get("pco_keywords", ""))
-        self.aux5_keywords_var = tk.StringVar(value=self.config_manager.get("aux5_keywords", ""))
-
-        for row, (label_text, var) in enumerate(
-            [
-                ("Comm:", self.comm_owners_var),
-                ("Power:", self.power_owners_var),
-                ("PCO:", self.pco_keywords_var),
-                ("Riser:", self.aux5_keywords_var),
-            ]
-        ):
-            ttk.Label(self.keywords_frame, text=label_text, width=8, anchor="w").grid(
-                row=row, column=0, sticky="w", pady=2, padx=(0, 4)
-            )
-            entry = ttk.Entry(self.keywords_frame, textvariable=var)
-            entry.grid(row=row, column=1, sticky="ew", pady=2)
-            entry.bind("<FocusOut>", self.save_owner_config)
-
         self.aux_fields = [
             ("Aux Data 1", "Pole Owner", True),
             ("Aux Data 2", "Pole Tag", True),
@@ -96,8 +59,6 @@ class AuxDataEditFrame(ttk.Frame):
 
         self.fields_frame = ttk.LabelFrame(fields_parent, text="Aux Data", padding=8)
         self.fields_frame.columnconfigure(1, weight=1, minsize=120)
-        saved_values = self.config_manager.get("last_aux_values", {})
-
         for i, (field_name, description, is_editable) in enumerate(self.aux_fields):
             row_frame = ttk.Frame(self.fields_frame)
             row_frame.grid(row=i, column=0, columnspan=2, sticky="ew", pady=3)
@@ -112,12 +73,9 @@ class AuxDataEditFrame(ttk.Frame):
             if is_editable:
                 entry = ttk.Entry(row_frame, width=25)
                 entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-                saved_key = f"aux_data_{i + 1}"
                 if i == 2:
                     entry.insert(0, "Auto (EXISTING/PROPOSED)")
                     entry.config(state="readonly")
-                elif saved_key in saved_values:
-                    entry.insert(0, saved_values[saved_key])
 
                 for idx, config_key, cb_label, placeholder, default_checked in AUX_AUTO_FILL_CONFIG:
                     if i == idx:
@@ -137,9 +95,6 @@ class AuxDataEditFrame(ttk.Frame):
                             entry.insert(0, placeholder)
                         break
 
-                if i != 2:
-                    entry.bind("<FocusOut>", self.auto_save_values)
-                    entry.bind("<KeyRelease>", self.auto_save_values)
                 self.aux_entries.append(entry)
             else:
                 auto_label = ttk.Label(
@@ -147,18 +102,6 @@ class AuxDataEditFrame(ttk.Frame):
                 )
                 auto_label.grid(row=0, column=1, sticky="w", padx=(0, 0))
                 self.aux_entries.append(auto_label)
-
-    def _refresh_config_combo(self):
-        """Load config names from config/ folder."""
-        self.config_combo["values"] = get_available_configs()
-
-    def _on_config_selected(self, event=None):
-        val = self.config_var.get()
-        if val:
-            self.config_manager.switch_config(val)
-
-    def get_selected_config_power_label(self) -> str:
-        return self.config_manager.get_power_label()
 
     def select_excel_file(self):
         file_path = filedialog.askopenfilename(
@@ -174,22 +117,6 @@ class AuxDataEditFrame(ttk.Frame):
         if value and value != "No file selected":
             return value
         return self.config_manager.get("excel_file_path", "")
-
-    def auto_save_values(self, event=None):
-        placeholders = (PLACEHOLDER_AUX1, PLACEHOLDER_AUX2, "Auto (EXISTING/PROPOSED)")
-        values = {}
-        entry_index = 0
-        for i, (_, _, is_editable) in enumerate(self.aux_fields):
-            if not is_editable:
-                entry_index += 1
-                continue
-            entry = self.aux_entries[entry_index]
-            entry_index += 1
-            if hasattr(entry, "get"):
-                value = entry.get().strip()
-                if value and value not in placeholders:
-                    values[f"aux_data_{i + 1}"] = value
-        self.config_manager.set("last_aux_values", values)
 
     def _toggle_aux_auto_fill(self, field_index: int):
         config_key, _, placeholder, *_ = next(
@@ -207,23 +134,13 @@ class AuxDataEditFrame(ttk.Frame):
         else:
             entry.config(state="normal")
 
-    def save_owner_config(self, event=None):
-        self.config_manager.set("comm_owners", self.comm_owners_var.get())
-        self.config_manager.set("power_owners", self.power_owners_var.get())
-        self.config_manager.set("pco_keywords", self.pco_keywords_var.get())
-        self.config_manager.set("aux5_keywords", self.aux5_keywords_var.get())
-
     def analyze_mr_note(self, mr_note: str) -> tuple:
-        def get_keywords(var_attr: str) -> List[str]:
-            var = getattr(self, var_attr, None)
-            return parse_keywords(var.get() if var else "")
-
         return analyze_mr_note_for_aux_data(
             mr_note,
-            comm_keywords=get_keywords("comm_owners_var"),
-            power_keywords=get_keywords("power_owners_var"),
-            pco_keywords=get_keywords("pco_keywords_var"),
-            aux5_keywords=get_keywords("aux5_keywords_var"),
+            comm_keywords=parse_keywords(self.config_manager.get("comm_keywords", "")),
+            power_keywords=parse_keywords(self.config_manager.get("power_keywords", "")),
+            pco_keywords=parse_keywords(self.config_manager.get("pco_keywords", "")),
+            aux5_keywords=parse_keywords(self.config_manager.get("aux5_keywords", "")),
         )
 
     def get_aux_values(self) -> Dict[int, str]:

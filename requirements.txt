@@ -1,6 +1,10 @@
-# Excel file reading
+# Excel file reading/writing
 openpyxl>=3.0.0
 pandas>=1.3.0
 
 # Icon display in UI
 Pillow>=9.0.0
+
+# Wire spec shapefile support (OPPD config)
+pyshp>=2.3.0
+pyproj>=3.0.0

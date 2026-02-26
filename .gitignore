@@ -7,3 +7,4 @@ Test Files/
 log.csv
 data/
 *.xlsx
+/output/

@@ -1,1 +1,20 @@
-{"permissions":{"allow":["Bash(ls:*)","Bash(python:*)","Bash(where:*)","Bash(python3:*)","Bash(dir:*)","Bash(py:*)","Bash(bash -c:*)","Bash(cd:*)","Bash(powershell:*)","Bash(python.exe:*)"]}}
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(python:*)",
+      "Bash(where:*)",
+      "Bash(python3:*)",
+      "Bash(dir:*)",
+      "Bash(py:*)",
+      "Bash(bash -c:*)",
+      "Bash(cd:*)",
+      "Bash(powershell:*)",
+      "Bash(python.exe:*)",
+      "Bash(grep:*)",
+      "Bash(cd C:\\\\Users\\\\nsaro\\\\Desktop\\\\Python Projects\\\\PPLX_Handler:*)",
+      "Bash(conda run:*)",
+      "Bash(del \"c:\\\\Users\\\\nsaro\\\\Desktop\\\\Python Projects\\\\PPLX_Handler\\\\config\\\\_active.json\")"
+    ]
+  }
+}

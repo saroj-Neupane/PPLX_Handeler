@@ -16,7 +16,7 @@ except ImportError:
     openpyxl = None
 
 
-# ---------- Coordinate transform & distance (same as tmp_query_wire_between_points) ----------
+# ---------- Coordinate transform & distance ----------
 def load_crs_from_prj(prj_path: Path) -> CRS:
     return CRS.from_wkt(prj_path.read_text())
 
@@ -51,6 +51,97 @@ def point_to_polyline_dist2(px: float, py: float, points: List[Tuple[float, floa
     return best
 
 
+# ---------- Cached shapefile layer ----------
+_SEARCH_MARGIN = 500  # projected units (feet), expanded via fallback if needed
+
+_ATTR_NAMES = ("d_masterma", "d_neutralm", "d_orientat", "d_runtype")
+
+
+class _ShapefileLayer:
+    """Pre-loaded shapefile with bbox index for fast repeated spatial queries."""
+    __slots__ = ("field_idx", "points", "records", "bboxes")
+
+    def __init__(self, shp_path: Path):
+        reader = shapefile.Reader(str(shp_path))
+        fields = [f[0] for f in reader.fields[1:]]
+        self.field_idx = {
+            name: fields.index(name) if name in fields else None
+            for name in _ATTR_NAMES
+        }
+        self.points = []
+        self.records = []
+        self.bboxes = []
+        for sr, rec in zip(reader.shapes(), reader.records()):
+            if not sr.points:
+                continue
+            self.points.append(sr.points)
+            self.records.append(rec)
+            self.bboxes.append(sr.bbox)  # [xmin, ymin, xmax, ymax]
+
+    def query(self, x1, y1, x2, y2) -> Dict[str, Any]:
+        """Find best matching line for the two projected points."""
+        best_i, best_score, best_d1_2, best_d2_2 = None, float("inf"), 0.0, 0.0
+
+        # Bounding box filter: search around both points
+        lo_x = min(x1, x2) - _SEARCH_MARGIN
+        lo_y = min(y1, y2) - _SEARCH_MARGIN
+        hi_x = max(x1, x2) + _SEARCH_MARGIN
+        hi_y = max(y1, y2) + _SEARCH_MARGIN
+
+        checked = 0
+        for i, bbox in enumerate(self.bboxes):
+            if bbox[2] < lo_x or bbox[0] > hi_x or bbox[3] < lo_y or bbox[1] > hi_y:
+                continue
+            checked += 1
+            pts = self.points[i]
+            d1_2 = point_to_polyline_dist2(x1, y1, pts)
+            d2_2 = point_to_polyline_dist2(x2, y2, pts)
+            score = max(d1_2, d2_2)
+            if score < best_score:
+                best_score = score
+                best_i = i
+                best_d1_2 = d1_2
+                best_d2_2 = d2_2
+
+        # Fallback: full scan if nothing inside margin
+        if best_i is None and checked == 0:
+            for i, pts in enumerate(self.points):
+                d1_2 = point_to_polyline_dist2(x1, y1, pts)
+                d2_2 = point_to_polyline_dist2(x2, y2, pts)
+                score = max(d1_2, d2_2)
+                if score < best_score:
+                    best_score = score
+                    best_i = i
+                    best_d1_2 = d1_2
+                    best_d2_2 = d2_2
+
+        out: Dict[str, Any] = {
+            "d_masterma": None, "d_neutralm": None,
+            "d_orientat": None, "d_runtype": None,
+            "dist1_ft": None, "dist2_ft": None, "line_index": best_i,
+        }
+        if best_i is not None:
+            out["dist1_ft"] = math.sqrt(best_d1_2)
+            out["dist2_ft"] = math.sqrt(best_d2_2)
+            rec = self.records[best_i]
+            for k, idx in self.field_idx.items():
+                if idx is not None:
+                    out[k] = rec[idx] or None
+        return out
+
+
+# Module-level cache: path string -> _ShapefileLayer
+_layer_cache: Dict[str, _ShapefileLayer] = {}
+
+
+def _get_layer(shp_path: Path) -> _ShapefileLayer:
+    key = str(shp_path)
+    if key not in _layer_cache:
+        _layer_cache[key] = _ShapefileLayer(shp_path)
+    return _layer_cache[key]
+
+
+# ---------- Public query functions ----------
 def wire_spec_at_point(
     lat: float,
     lon: float,
@@ -77,44 +168,8 @@ def wire_spec_between_points(
     x1, y1 = transformer.transform(lon1, lat1)
     x2, y2 = transformer.transform(lon2, lat2)
 
-    reader = shapefile.Reader(str(shp_path))
-    fields = [f[0] for f in reader.fields[1:]]
-    idx = {name: fields.index(name) if name in fields else None for name in ("d_masterma", "d_neutralm", "d_orientat", "d_runtype")}
-
-    best_i = None
-    best_score = float("inf")
-    best_d1 = best_d2 = None
-
-    for i, (shape_rec, rec) in enumerate(zip(reader.shapes(), reader.records())):
-        pts = shape_rec.points
-        if not pts:
-            continue
-        d1_2 = point_to_polyline_dist2(x1, y1, pts)
-        d2_2 = point_to_polyline_dist2(x2, y2, pts)
-        score = max(d1_2, d2_2)
-        if score < best_score:
-            best_score = score
-            best_i = i
-            best_d1 = math.sqrt(d1_2)
-            best_d2 = math.sqrt(d2_2)
-
-    out = {
-        "d_masterma": None,
-        "d_neutralm": None,
-        "d_orientat": None,
-        "d_runtype": None,
-        "dist1_ft": best_d1,
-        "dist2_ft": best_d2,
-        "line_index": best_i,
-    }
-    if best_i is not None:
-        rec = reader.record(best_i)
-        for k in out:
-            if k in ("dist1_ft", "dist2_ft", "line_index"):
-                continue
-            if idx.get(k) is not None:
-                out[k] = rec[idx[k]] or None
-    return out
+    layer = _get_layer(shp_path)
+    return layer.query(x1, y1, x2, y2)
 
 
 def wire_spec_between_points_oppd(
@@ -181,6 +236,10 @@ def build_wire_spec_comparison(
 
     LEN_TOLERANCE = 0.15  # 15% tolerance for span length match
 
+    # Cache PPLX handlers to avoid re-parsing the same file
+    from src.core.handler import PPLXHandler
+    pplx_cache: Dict[str, Any] = {}
+
     rows = []
     for c in conns:
         n1 = nodes.get(c["node_id_1"])
@@ -217,9 +276,9 @@ def build_wire_spec_comparison(
         pplx_path = scid_to_pplx.get(base1) or scid_to_pplx.get(base2)
         if pplx_path:
             try:
-                from src.core.handler import PPLXHandler
-
-                h = PPLXHandler(pplx_path)
+                if pplx_path not in pplx_cache:
+                    pplx_cache[pplx_path] = PPLXHandler(pplx_path)
+                h = pplx_cache[pplx_path]
                 by_type = h.get_spans_by_type_and_length()
                 if span_in is not None:
                     for stype, lengths in by_type.items():
@@ -389,7 +448,7 @@ def main() -> None:
         spec = wire_spec_between_points(lat1, lon1, lat2, lon2, prj_path, shp_path, transformer)
         results.append((scid1 or nid1, scid2 or nid2, nid1, nid2, lat1, lon1, spec))
 
-    # Sort by (scid1, scid2) when numeric so we get 1→2, 2→3 order for display
+    # Sort by (scid1, scid2) when numeric so we get 1->2, 2->3 order for display
     def sort_key(r):
         s1, s2 = r[0], r[1]
         try:

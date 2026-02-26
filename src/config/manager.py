@@ -1,4 +1,9 @@
-"""Application configuration and path memory."""
+"""Application configuration and path memory.
+
+Two files in config/:
+  - state.json: session paths, window geometry, active config name
+  - <name>.json (e.g. OPPD.json): job-specific keywords
+"""
 
 import json
 import os
@@ -6,19 +11,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Keys stored in config/state.json (session/preferences). All others go to config/<name>.json.
+
+# Keys stored in state.json. Everything else lives in the job config file.
 STATE_KEYS = {
-    "last_input_directory",
-    "last_output_directory",
+    "active_config",
     "last_existing_folder_path",
     "last_proposed_folder_path",
-    "window_geometry",
-    "recent_files",
     "excel_file_path",
-    "last_aux_values",
-    "auto_fill_aux1",
-    "auto_fill_aux2",
-    "default_aux_values",
 }
 
 
@@ -34,80 +33,65 @@ def _get_config_dir() -> str:
     return os.path.join(_get_project_root(), "config")
 
 
-def _get_active_config_path() -> str:
-    """Path to config/_active.json (replaces root config.json)."""
-    return os.path.join(_get_config_dir(), "_active.json")
-
-
 def _get_state_path() -> str:
     """Path to config/state.json."""
     return os.path.join(_get_config_dir(), "state.json")
 
 
+def get_active_config_name() -> str:
+    """Return the active config name from state.json. Default: OPPD."""
+    state = _load_state()
+    return state.get("active_config", "OPPD")
+
+
 def get_available_configs() -> List[str]:
-    """List available config names (without .json) in config folder, excluding _active.json."""
+    """List available config names (without .json), excluding state and underscore files."""
     config_dir = _get_config_dir()
     if not os.path.isdir(config_dir):
         return ["OPPD"]
     configs = []
     for f in os.listdir(config_dir):
-        if f.endswith(".json") and not f.startswith("_"):
+        if f.endswith(".json") and not f.startswith("_") and f != "state.json":
             configs.append(f[:-5])
     return sorted(configs) if configs else ["OPPD"]
 
 
-def get_active_config_name() -> str:
-    """Read active config from config/_active.json. Default: OPPD."""
-    path = _get_active_config_path()
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data.get("active_config", "OPPD")
-    except Exception:
-        pass
-    return "OPPD"
+# ---------- State persistence ----------
 
-
-def set_active_config(name: str) -> None:
-    """Write active config to config/_active.json."""
-    path = _get_active_config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    data = {"active_config": name}
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"Error saving active config: {e}")
+_STATE_DEFAULTS: Dict[str, Any] = {
+    "active_config": "OPPD",
+    "last_existing_folder_path": "",
+    "last_proposed_folder_path": "",
+    "excel_file_path": "",
+}
 
 
 def _load_state() -> Dict[str, Any]:
     """Load state from config/state.json."""
-    default = {
-        "last_input_directory": "",
-        "last_output_directory": "",
-        "last_existing_folder_path": "",
-        "last_proposed_folder_path": "",
-        "window_geometry": "1000x700",
-        "recent_files": [],
-        "excel_file_path": "",
-        "last_aux_values": {},
-        "auto_fill_aux1": False,
-        "auto_fill_aux2": False,
-        "default_aux_values": [""] * 8,
-    }
     path = _get_state_path()
+    state = dict(_STATE_DEFAULTS)
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for k, v in default.items():
-                if k not in data:
-                    data[k] = v
-            return data
+            state.update({k: v for k, v in data.items() if k in STATE_KEYS})
     except Exception as e:
         print(f"Error loading state: {e}")
-    return default
+
+    # Migrate: if _active.json exists, absorb its value and delete it
+    active_path = os.path.join(_get_config_dir(), "_active.json")
+    try:
+        if os.path.exists(active_path):
+            with open(active_path, "r", encoding="utf-8") as f:
+                active_data = json.load(f)
+            if "active_config" in active_data:
+                state["active_config"] = active_data["active_config"]
+            os.remove(active_path)
+            _save_state(state)
+    except Exception:
+        pass
+
+    return state
 
 
 def _save_state(state: Dict[str, Any]) -> None:
@@ -121,19 +105,16 @@ def _save_state(state: Dict[str, Any]) -> None:
         print(f"Error saving state: {e}")
 
 
+# ---------- Config manager ----------
+
 class PPLXConfigManager:
-    """Manages application configuration and path memory."""
+    """Manages job configuration and session state."""
 
     def __init__(self, config_name: Optional[str] = None):
-        """
-        Initialize config manager.
-        config_name: Name of config file (without .json), e.g. 'OPPD'.
-                     If None, uses active_config from config/_active.json.
-        """
-        self.config_name = config_name or get_active_config_name()
-        self.config_file = self._find_config_file()
-        self.config = self.load_config()
         self.state = _load_state()
+        self.config_name = config_name or self.state.get("active_config", "OPPD")
+        self.config_file = self._find_config_file()
+        self.config = self._load_config()
 
     def _find_config_file(self) -> str:
         """Find config file in config/ folder."""
@@ -142,56 +123,33 @@ class PPLXConfigManager:
 
         if getattr(sys, "frozen", False):
             exe_dir = os.path.dirname(sys.executable)
-            possible = [
+            for p in [
                 os.path.join(exe_dir, "config", f"{self.config_name}.json"),
                 config_path,
-                os.path.join(os.getcwd(), "config", f"{self.config_name}.json"),
-            ]
-            for p in possible:
+            ]:
                 if os.path.exists(p):
                     return p
-
-        if os.path.exists(config_path):
-            return config_path
 
         os.makedirs(config_dir, exist_ok=True)
         return config_path
 
-    def load_config(self) -> Dict[str, Any]:
-        """Load static configuration from JSON file."""
-        default_config = {
-            "configurations": [
-                {"name": "Default", "power_label": "POWER"},
-                {"name": "OPPD", "power_label": "OPPD"},
-            ],
-            "selected_config": "OPPD",
-        }
-
+    def _load_config(self) -> Dict[str, Any]:
+        """Load job configuration from JSON file."""
+        default = {}
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                for key, value in default_config.items():
-                    if key not in config:
-                        config[key] = value
-                configs = config.get("configurations", [])
-                if isinstance(configs, list):
-                    names = [c.get("name") for c in configs if isinstance(c, dict)]
-                    for req in [
-                        {"name": "Default", "power_label": "POWER"},
-                        {"name": "OPPD", "power_label": "OPPD"},
-                    ]:
-                        if req["name"] not in names:
-                            configs = list(configs) + [req]
-                            config["configurations"] = configs
+                # Strip legacy keys if present
+                for legacy in ("configurations", "selected_config", "ignore_scid_keywords", "0", "1"):
+                    config.pop(legacy, None)
                 return config
         except Exception as e:
             print(f"Error loading config: {e}")
-
-        return default_config
+        return default
 
     def save_config(self) -> None:
-        """Save static configuration to JSON file."""
+        """Save job configuration to JSON file."""
         try:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             with open(self.config_file, "w", encoding="utf-8") as f:
@@ -200,13 +158,13 @@ class PPLXConfigManager:
             print(f"Error saving config: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value (config or state)."""
+        """Get value from state or config."""
         if key in STATE_KEYS:
             return self.state.get(key, default)
         return self.config.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        """Set configuration value and persist to appropriate file."""
+        """Set value and persist to the appropriate file."""
         if key in STATE_KEYS:
             self.state[key] = value
             _save_state(self.state)
@@ -214,28 +172,11 @@ class PPLXConfigManager:
             self.config[key] = value
             self.save_config()
 
-    def add_recent_file(self, file_path: str) -> None:
-        """Add file to recent files list."""
-        recent = self.state.get("recent_files", [])
-        if file_path in recent:
-            recent.remove(file_path)
-        recent.insert(0, file_path)
-        recent = recent[:10]
-        self.set("recent_files", recent)
-
     def switch_config(self, name: str) -> None:
-        """Switch to config from config/ folder and reload."""
+        """Switch to a different job config and reload."""
         self.config_name = name
         self.config_file = self._find_config_file()
-        self.config = self.load_config()
-        set_active_config(name)
+        self.config = self._load_config()
+        self.state["active_config"] = name
+        _save_state(self.state)
 
-    def get_power_label(self) -> str:
-        """Get power_label for current config."""
-        label = self.config.get("power_label")
-        if label:
-            return label
-        for c in self.config.get("configurations", []):
-            if isinstance(c, dict) and c.get("name") == self.config_name:
-                return c.get("power_label", "POWER")
-        return "POWER"

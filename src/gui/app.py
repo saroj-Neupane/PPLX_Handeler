@@ -6,11 +6,10 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from src.config.manager import PPLXConfigManager
+from src.config.manager import PPLXConfigManager, get_available_configs
 from src.core.handler import PPLXHandler
 from src.gui.constants import THEME
 from src.gui.frames.file_list import PPLXFileListFrame
-from src.gui.frames.aux_data import AuxDataEditFrame
 from src.gui.frames.processing import ProcessingFrame
 
 try:
@@ -21,28 +20,60 @@ except ImportError:
 
 
 def _apply_theme(style: ttk.Style) -> None:
-    """Apply White & Purple theme to ttk widgets."""
-    bg, panel, card = THEME["bg_dark"], THEME["bg_panel"], THEME["bg_card"]
-    purple, text, text_muted = (
-        THEME["purple"],
-        THEME["text"],
-        THEME["text_muted"],
-    )
+    """Apply modern minimal theme to ttk widgets."""
+    bg = THEME["bg"]
+    panel = THEME["bg_panel"]
+    card = THEME["bg_card"]
+    purple = THEME["purple"]
+    purple_light = THEME["purple_light"]
+    purple_dim = THEME["purple_dim"]
+    text = THEME["text"]
+    text_muted = THEME["text_muted"]
+    border = THEME["border"]
+
     style.configure(".", background=panel, foreground=text, font=("Segoe UI", 10))
     style.configure("TFrame", background=panel)
     style.configure("TLabel", background=panel, foreground=text)
-    style.configure("TLabelframe", background=panel, foreground=purple)
-    style.configure("TLabelframe.Label", background=panel, foreground=purple, font=("Segoe UI", 10, "bold"))
+
+    style.configure("TLabelframe", background=panel, foreground=text, bordercolor=border)
+    style.configure(
+        "TLabelframe.Label", background=panel, foreground=THEME["text_secondary"],
+        font=("Segoe UI", 9, "bold"),
+    )
+
     style.configure("TButton", background=card, foreground=purple, padding=(12, 6))
-    style.map("TButton", background=[("active", purple)], foreground=[("active", "white")])
+    style.map("TButton", background=[("active", border)], foreground=[("active", purple)])
+
+    # Accent button - filled purple for primary actions
+    style.configure(
+        "Accent.TButton",
+        background=purple, foreground="white",
+        padding=(20, 10), font=("Segoe UI", 11, "bold"),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[("active", purple_light), ("disabled", purple_dim)],
+        foreground=[("disabled", panel)],
+    )
+
     style.configure("TEntry", fieldbackground=card, foreground=text, insertcolor=purple)
     style.configure("TCombobox", fieldbackground=card, foreground=text, background=card)
     style.map("TCombobox", fieldbackground=[("readonly", card)], background=[("readonly", card)])
-    style.configure("Horizontal.TProgressbar", background=purple, troughcolor=card, thickness=8)
+
+    style.configure(
+        "Horizontal.TProgressbar",
+        background=purple, troughcolor=card, thickness=6,
+    )
+
     style.configure("TPanedwindow", background=panel)
-    style.configure("Vertical.TScrollbar", troughcolor=card, background=panel)
+    style.configure("Vertical.TScrollbar", troughcolor=card, background=border)
     style.configure("TCheckbutton", background=panel, foreground=text)
     style.map("TCheckbutton", background=[("active", panel)], foreground=[("active", purple)])
+
+    # Muted label style
+    style.configure("Muted.TLabel", foreground=text_muted, font=("Segoe UI", 9))
+    style.configure("Secondary.TLabel", foreground=THEME["text_secondary"])
+    style.configure("Heading.TLabel", foreground=text, font=("Segoe UI", 11, "bold"))
 
 
 def _get_icon_path() -> str | None:
@@ -69,8 +100,8 @@ class PPLXGUIApp:
 
     def setup_window(self):
         self.root.title("PPLX Handler")
-        self.root.geometry(self.config_manager.get("window_geometry", "1000x700"))
-        self.root.minsize(800, 600)
+        self.root.geometry("780x650")
+        self.root.minsize(620, 500)
 
         icon_path = _get_icon_path()
         if icon_path:
@@ -84,95 +115,127 @@ class PPLXGUIApp:
             style.theme_use("clam")
         _apply_theme(style)
 
-        self.root.configure(bg=THEME["bg_dark"])
+        self.root.configure(bg=THEME["bg"])
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def setup_ui(self):
-        main_frame = ttk.Frame(self.root, padding="12")
-        main_frame.pack(fill="both", expand=True)
+        # Outer wrapper centers content with max width
+        outer = ttk.Frame(self.root)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
 
-        header = tk.Frame(main_frame, bg=THEME["bg_dark"], height=56)
-        header.pack(fill="x", pady=(0, 14))
-        header.pack_propagate(False)
+        main = ttk.Frame(outer, padding=20)
+        main.grid(row=0, column=0, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.columnconfigure(1, weight=1)
+
+        # Cap content width so it doesn't stretch on wide screens
+        def _cap_width(event=None):
+            max_w = 900
+            if outer.winfo_width() > max_w:
+                pad_x = (outer.winfo_width() - max_w) // 2
+                main.grid_configure(padx=pad_x)
+            else:
+                main.grid_configure(padx=0)
+        outer.bind("<Configure>", _cap_width)
+
+        # -- Row 0: Header --
+        header = tk.Frame(main, bg=THEME["bg_panel"])
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
 
         icon_path = _get_icon_path()
         if icon_path and PILLOW_AVAILABLE:
             try:
-                from PIL import Image
                 img = Image.open(icon_path)
-                img = img.resize((40, 40), Image.Resampling.LANCZOS)
+                img = img.resize((28, 28), Image.Resampling.LANCZOS)
                 self._header_icon = ImageTk.PhotoImage(img)
-                icon_label = tk.Label(
-                    header, image=self._header_icon, bg=THEME["bg_dark"]
-                )
-                icon_label.pack(side="left", padx=(16, 12), pady=8)
+                tk.Label(
+                    header, image=self._header_icon, bg=THEME["bg_panel"],
+                ).pack(side="left", padx=(0, 10))
             except Exception:
                 pass
 
-        title_label = tk.Label(
-            header,
-            text="PPLX Handler",
-            font=("Segoe UI", 18, "bold"),
-            fg=THEME["purple"],
-            bg=THEME["bg_dark"],
+        tk.Label(
+            header, text="PPLX Handler",
+            font=("Segoe UI", 20, "bold"),
+            fg=THEME["purple"], bg=THEME["bg_panel"],
+        ).pack(side="left")
+
+        # Config profile selector (right side of header)
+        configs = get_available_configs()
+        self.config_var = tk.StringVar(value=self.config_manager.config_name)
+        config_combo = ttk.Combobox(
+            header, textvariable=self.config_var,
+            values=configs, state="readonly", width=12,
         )
-        title_label.pack(side="left", pady=14)
+        config_combo.pack(side="right")
+        config_combo.bind("<<ComboboxSelected>>", self._on_config_changed)
+        tk.Label(
+            header, text="Config", font=("Segoe UI", 9),
+            fg=THEME["text_secondary"], bg=THEME["bg_panel"],
+        ).pack(side="right", padx=(0, 6))
 
-        sep = tk.Frame(main_frame, height=2, bg=THEME["purple"])
-        sep.pack(fill="x", pady=(0, 10))
+        # -- Row 1: Excel file selection --
+        excel_row = ttk.Frame(main)
+        excel_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        excel_row.columnconfigure(1, weight=1)
 
-        self.aux_frame = AuxDataEditFrame(main_frame, self.config_manager)
+        ttk.Label(
+            excel_row, text="Excel File", style="Heading.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
 
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.excel_file_var = tk.StringVar()
+        self.excel_file_var.set(self.config_manager.get("excel_file_path", "No file selected"))
+        ttk.Label(
+            excel_row, textvariable=self.excel_file_var, style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 8))
 
-        left_col = ttk.Frame(paned)
-        right_col = ttk.Frame(paned)
-        paned.add(left_col, weight=1)
-        paned.add(right_col, weight=1)
+        ttk.Button(
+            excel_row, text="Browse", command=self.select_excel_file,
+        ).grid(row=0, column=2)
 
-        self.aux_frame.setup_ui(
-            toolbar_parent=main_frame,
-            excel_parent=left_col,
-            keywords_parent=left_col,
-            fields_parent=left_col,
+        # Subtle divider
+        tk.Frame(main, height=1, bg=THEME["border"]).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(0, 16),
         )
 
-        self.aux_frame.toolbar_frame.pack(fill="x", pady=(0, 10))
-        paned.pack(fill="both", expand=True)
-
-        sources_frame = ttk.LabelFrame(left_col, text="PPLX Sources", padding=8)
-        sources_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        sources_frame.grid_rowconfigure(0, weight=1)
-        sources_frame.columnconfigure(0, weight=1)
-        sources_frame.columnconfigure(1, weight=1)
-        sources_frame.rowconfigure(0, weight=1)
-
+        # -- Row 3: File lists side by side --
         self.existing_frame = PPLXFileListFrame(
-            sources_frame, self.config_manager, category="EXISTING"
+            main, self.config_manager, category="EXISTING",
         )
-        self.existing_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self.existing_frame.grid(row=3, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+
         self.proposed_frame = PPLXFileListFrame(
-            sources_frame, self.config_manager, category="PROPOSED"
+            main, self.config_manager, category="PROPOSED",
         )
-        self.proposed_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self.proposed_frame.grid(row=3, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
 
-        self.aux_frame.excel_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        main.rowconfigure(3, weight=1)
 
-        self.aux_frame.keywords_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-
-        self.aux_frame.fields_frame.grid(row=3, column=0, sticky="ew", pady=(0, 0))
-
-        left_col.columnconfigure(0, weight=1)
-        left_col.rowconfigure(0, weight=1)
-
+        # -- Row 4: Processing --
         self.processing_frame = ProcessingFrame(
-            right_col,
+            main,
             self.config_manager,
             self.existing_frame,
             self.proposed_frame,
-            self.aux_frame,
         )
-        self.processing_frame.pack(fill="both", expand=True)
+        self.processing_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
+        main.rowconfigure(4, weight=2)
+
+    def _on_config_changed(self, event=None):
+        name = self.config_var.get()
+        if name and name != self.config_manager.config_name:
+            self.config_manager.switch_config(name)
+
+    def select_excel_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Excel File",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
+        )
+        if file_path:
+            self.excel_file_var.set(file_path)
+            self.config_manager.set("excel_file_path", file_path)
 
     def show_batch_report(self):
         from datetime import datetime
@@ -241,7 +304,6 @@ class PPLXGUIApp:
                 )
 
     def on_closing(self):
-        self.config_manager.set("window_geometry", self.root.geometry())
         if hasattr(self, "existing_frame"):
             self.existing_frame.cleanup_temp_dir()
         if hasattr(self, "proposed_frame"):

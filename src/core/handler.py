@@ -2,7 +2,6 @@
 PPLX File Handler - XML Editor for Pole Line Engineering Files.
 """
 
-import glob
 import json
 import os
 from pathlib import Path
@@ -346,47 +345,3 @@ class PPLXHandler:
             except Exception as e:
                 print(f"Error exporting structure: {e}")
         return structure
-
-
-class PPLXBatchProcessor:
-    """Batch processor for multiple PPLX files."""
-
-    def __init__(self, directory_path: str = "pplx_files"):
-        self.directory_path = directory_path
-        self.pplx_files = self._find_pplx_files()
-
-    def _find_pplx_files(self) -> List[str]:
-        """Find all pplx files in the directory."""
-        pattern = os.path.join(self.directory_path, "*.pplx")
-        return sorted(glob.glob(pattern))
-
-    def list_files(self) -> List[str]:
-        """List all found pplx files."""
-        return self.pplx_files
-
-    def batch_update_aux_data(
-        self, aux_data_number: int, new_value: str, file_pattern: str = "*"
-    ) -> Dict[str, bool]:
-        """Update Aux Data for multiple files."""
-        results = {}
-        for file_path in self.pplx_files:
-            filename = os.path.basename(file_path)
-            if file_pattern == "*" or file_pattern in filename:
-                handler = PPLXHandler(file_path)
-                success = handler.set_aux_data(aux_data_number, new_value)
-                if success:
-                    success = handler.save_file()
-                results[filename] = success
-        return results
-
-    def generate_report(self) -> Dict:
-        """Generate a report of all files and their Aux Data."""
-        report = {"total_files": len(self.pplx_files), "files": {}}
-        for file_path in self.pplx_files:
-            filename = os.path.basename(file_path)
-            handler = PPLXHandler(file_path)
-            report["files"][filename] = {
-                "info": handler.get_file_info(),
-                "aux_data": handler.get_aux_data(),
-            }
-        return report

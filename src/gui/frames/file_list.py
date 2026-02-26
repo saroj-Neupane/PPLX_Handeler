@@ -42,40 +42,52 @@ class PPLXFileListFrame(ttk.Frame):
                 print(f"Warning: Could not auto-load previous source: {exc}")
 
     def setup_ui(self):
-        """Setup the file list UI."""
-        ttk.Label(self, text=self.category, font=("Segoe UI", 11, "bold")).pack(
-            pady=(0, 6)
-        )
-        ttk.Button(
-            self, text=f"Select {self.category}", command=self.select_folder
-        ).pack(pady=(0, 6))
+        """Setup the file list UI with minimal design."""
+        # Section header row
+        header_row = ttk.Frame(self)
+        header_row.pack(fill="x", pady=(0, 8))
 
+        ttk.Label(
+            header_row, text=self.category, style="Heading.TLabel",
+        ).pack(side="left")
+
+        self.count_label = ttk.Label(header_row, text="", style="Muted.TLabel")
+        self.count_label.pack(side="right")
+
+        # Select button
+        ttk.Button(
+            self, text=f"Select Source", command=self.select_folder,
+        ).pack(fill="x", pady=(0, 8))
+
+        # File list
         list_frame = ttk.Frame(self)
-        list_frame.pack(fill="x")
+        list_frame.pack(fill="both", expand=True)
+
         self.file_listbox = tk.Listbox(
             list_frame,
             selectmode=tk.EXTENDED,
-            height=8,
+            height=6,
             bg=THEME["bg_card"],
             fg=THEME["text"],
             selectbackground=THEME["purple"],
             selectforeground="white",
-            font=("Segoe UI", 10),
-            highlightthickness=0,
+            font=("Segoe UI", 9),
+            highlightthickness=1,
+            highlightcolor=THEME["border"],
+            highlightbackground=THEME["border"],
+            relief="flat",
+            bd=0,
         )
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_listbox.yview)
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self.file_listbox.yview,
+        )
         self.file_listbox.configure(yscrollcommand=scrollbar.set)
         self.file_listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        self.folder_label = ttk.Label(
-            self, text=f"No {self.category} source selected", foreground=THEME["text_muted"]
-        )
-        self.folder_label.pack(pady=(5, 0))
-        self.status_label = ttk.Label(
-            self, text=f"Select a folder or ZIP containing {self.category} PPLX files"
-        )
-        self.status_label.pack(pady=(10, 0))
+        # Source path
+        self.folder_label = ttk.Label(self, text="", style="Muted.TLabel")
+        self.folder_label.pack(anchor="w", pady=(6, 0))
 
     def select_folder(self):
         """Select folder or ZIP containing PPLX files."""
@@ -130,7 +142,7 @@ class PPLXFileListFrame(ttk.Frame):
             source_label = self.display_name or os.path.basename(self.current_folder)
             if self.source_type == "zip":
                 source_label = f"{source_label} [ZIP]"
-            self.folder_label.config(text=f"Source: {source_label}", foreground=THEME["purple"])
+            self.folder_label.config(text=source_label)
             self.update_display()
         except Exception as e:
             messagebox.showerror("Error", f"Error reading folder: {str(e)}")
@@ -143,9 +155,7 @@ class PPLXFileListFrame(ttk.Frame):
         self.source_path = ""
         self.display_name = ""
         self.source_type = "folder"
-        self.folder_label.config(
-            text=f"No {self.category} source selected", foreground=THEME["text_muted"]
-        )
+        self.folder_label.config(text="")
         self.update_display()
 
     def update_display(self):
@@ -157,15 +167,12 @@ class PPLXFileListFrame(ttk.Frame):
             except ValueError:
                 display_name = os.path.basename(file_path)
             self.file_listbox.insert(tk.END, display_name.replace("\\", "/"))
+
         count = len(self.files)
         if count > 0:
-            self.status_label.config(
-                text=f"{count} {self.category} PPLX file{'s' if count != 1 else ''} found"
-            )
+            self.count_label.config(text=f"{count} file{'s' if count != 1 else ''}")
         else:
-            self.status_label.config(
-                text=f"Select a folder or ZIP containing {self.category} PPLX files"
-            )
+            self.count_label.config(text="")
 
     def get_files(self) -> List[str]:
         """Get the list of selected files."""
