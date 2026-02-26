@@ -4,5 +4,16 @@
   "pco_keywords": "REPLACING EXISTING",
   "aux5_keywords": "METRONET RISER, INSTALL RISER",
   "auto_fill_aux1": false,
-  "auto_fill_aux2": false
+  "auto_fill_aux2": false,
+  "power_label": "OPPD",
+  "wire_spec_mapping": {
+    "ACSR 1/0 AWG 6/1 RAVEN": "1/0 ACSR WP",
+    "ACSR 4 AWG 6/1 SWAN": "4 ACSR",
+    "ACSR 2 AWG 7/1 SPARATE": "2 ACSR",
+    "TRIPLEX 4 AWG": "4/0 AA TRX",
+    "TRIPLEX 1/0 AL": "1/0 AA TRX",
+    "DUPLEX 4 AWG": "4-2C",
+    "AAC 336.4 KCM 19 STRAND TULIP": "336.4 AA TRX",
+    "#4 COPPER SOLID": "4-2C"
+  }
 }

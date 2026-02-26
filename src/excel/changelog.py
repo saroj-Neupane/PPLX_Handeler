@@ -15,7 +15,7 @@ _AUX_HEADERS = [
     "File Name", "MR Note",
     "Aux Data 1", "Aux Data 2", "Aux Data 3", "Aux Data 4", "Aux Data 5",
 ]
-_WIRE_HEADERS = ["Pole", "To Pole", "Wire_Type", "PPLX", "Shape"]
+_WIRE_HEADERS = ["Pole", "To Pole", "Wire_Type", "PPLX", "Shape", "QC"]
 
 
 def _leading_int(val) -> int:
@@ -58,10 +58,16 @@ def _autofit(ws) -> None:
         ws.column_dimensions[get_column_letter(col_idx)].width = _col_width(ws, col_idx)
 
 
+def _normalize_ws(s: str) -> str:
+    """Collapse whitespace for wire spec comparison."""
+    return " ".join(s.split())
+
+
 def write_change_log(
     path: str,
     csv_data: List[Dict],
     wire_spec_data: Optional[List[Dict]] = None,
+    wire_spec_mapping: Optional[Dict[str, str]] = None,
 ) -> bool:
     """
     Write change log xlsx with formatted Aux Data and Wire Specs sheets.
@@ -90,16 +96,30 @@ def write_change_log(
     for col, h in enumerate(_WIRE_HEADERS, 1):
         ws_wire.cell(row=1, column=col, value=h)
 
+    # Build normalized lookup from mapping (collapse whitespace in keys)
+    norm_map: Dict[str, str] = {}
+    if wire_spec_mapping:
+        for k, v in wire_spec_mapping.items():
+            norm_map[_normalize_ws(k)] = _normalize_ws(v)
+
     wire_rows = []
     for row in (wire_spec_data or []):
         pole_pole = row.get("Pole-Pole", "")
         parts = pole_pole.split("-", 1)
+        pplx = row.get("PPLX", "")
+        shape = row.get("Shape", "")
+        qc = ""
+        if pplx and shape and norm_map:
+            expected = norm_map.get(_normalize_ws(pplx))
+            if expected is not None:
+                qc = "PASS" if expected == _normalize_ws(shape) else "FAIL"
         wire_rows.append({
             "Pole": parts[0].strip() if parts else "",
             "To Pole": parts[1].strip() if len(parts) > 1 else "",
             "Wire_Type": row.get("Wire_Type", ""),
-            "PPLX": row.get("PPLX", ""),
-            "Shape": row.get("Shape", ""),
+            "PPLX": pplx,
+            "Shape": shape,
+            "QC": qc,
         })
     wire_rows.sort(key=lambda r: (_leading_int(r["Pole"]), _leading_int(r["To Pole"])))
 

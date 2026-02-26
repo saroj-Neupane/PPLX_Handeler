@@ -141,6 +141,7 @@ class AuxDataEditFrame(ttk.Frame):
             power_keywords=parse_keywords(self.config_manager.get("power_keywords", "")),
             pco_keywords=parse_keywords(self.config_manager.get("pco_keywords", "")),
             aux5_keywords=parse_keywords(self.config_manager.get("aux5_keywords", "")),
+            power_label=self.config_manager.get("power_label", "POWER"),
         )
 
     def get_aux_values(self) -> Dict[int, str]:

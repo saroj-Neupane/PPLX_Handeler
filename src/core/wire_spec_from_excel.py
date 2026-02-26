@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import shapefile  # pyshp
 from pyproj import CRS, Transformer
 
@@ -58,7 +59,7 @@ _ATTR_NAMES = ("d_masterma", "d_neutralm", "d_orientat", "d_runtype")
 
 
 class _ShapefileLayer:
-    """Pre-loaded shapefile with bbox index for fast repeated spatial queries."""
+    """Pre-loaded shapefile with numpy bbox index for fast repeated spatial queries."""
     __slots__ = ("field_idx", "points", "records", "bboxes")
 
     def __init__(self, shp_path: Path):
@@ -70,51 +71,53 @@ class _ShapefileLayer:
         }
         self.points = []
         self.records = []
-        self.bboxes = []
+        raw_bboxes = []
         for sr, rec in zip(reader.shapes(), reader.records()):
             if not sr.points:
                 continue
             self.points.append(sr.points)
             self.records.append(rec)
-            self.bboxes.append(sr.bbox)  # [xmin, ymin, xmax, ymax]
+            raw_bboxes.append(sr.bbox)  # [xmin, ymin, xmax, ymax]
+        # numpy array for vectorized bbox filtering
+        self.bboxes = np.array(raw_bboxes, dtype=np.float64) if raw_bboxes else np.empty((0, 4))
 
     def query(self, x1, y1, x2, y2) -> Dict[str, Any]:
         """Find best matching line for the two projected points."""
         best_i, best_score, best_d1_2, best_d2_2 = None, float("inf"), 0.0, 0.0
 
-        # Bounding box filter: search around both points
+        if len(self.bboxes) == 0:
+            return self._empty_result(None)
+
+        # Vectorized bounding box filter
         lo_x = min(x1, x2) - _SEARCH_MARGIN
         lo_y = min(y1, y2) - _SEARCH_MARGIN
         hi_x = max(x1, x2) + _SEARCH_MARGIN
         hi_y = max(y1, y2) + _SEARCH_MARGIN
 
-        checked = 0
-        for i, bbox in enumerate(self.bboxes):
-            if bbox[2] < lo_x or bbox[0] > hi_x or bbox[3] < lo_y or bbox[1] > hi_y:
-                continue
-            checked += 1
+        mask = (
+            (self.bboxes[:, 2] >= lo_x) & (self.bboxes[:, 0] <= hi_x) &
+            (self.bboxes[:, 3] >= lo_y) & (self.bboxes[:, 1] <= hi_y)
+        )
+        candidates = np.where(mask)[0]
+
+        # Fallback: full scan if nothing inside margin
+        if len(candidates) == 0:
+            candidates = np.arange(len(self.points))
+
+        for i in candidates:
             pts = self.points[i]
             d1_2 = point_to_polyline_dist2(x1, y1, pts)
             d2_2 = point_to_polyline_dist2(x2, y2, pts)
             score = max(d1_2, d2_2)
             if score < best_score:
                 best_score = score
-                best_i = i
+                best_i = int(i)
                 best_d1_2 = d1_2
                 best_d2_2 = d2_2
 
-        # Fallback: full scan if nothing inside margin
-        if best_i is None and checked == 0:
-            for i, pts in enumerate(self.points):
-                d1_2 = point_to_polyline_dist2(x1, y1, pts)
-                d2_2 = point_to_polyline_dist2(x2, y2, pts)
-                score = max(d1_2, d2_2)
-                if score < best_score:
-                    best_score = score
-                    best_i = i
-                    best_d1_2 = d1_2
-                    best_d2_2 = d2_2
+        return self._build_result(best_i, best_d1_2, best_d2_2)
 
+    def _build_result(self, best_i, best_d1_2, best_d2_2) -> Dict[str, Any]:
         out: Dict[str, Any] = {
             "d_masterma": None, "d_neutralm": None,
             "d_orientat": None, "d_runtype": None,
@@ -209,11 +212,14 @@ def build_wire_spec_comparison(
     shape_base_path: Path,
     extract_scid_fn,
     max_connections: Optional[int] = None,
+    log_callback=None,
 ) -> List[Dict[str, str]]:
     """
     Build comparison: Pole-Pole, Wire_Type, PPLX, Shape.
     Only when OPPD config. Returns list of dicts for change_log Wire Specs sheet.
     """
+    _log = log_callback or (lambda msg: None)
+
     nodes = load_nodes(excel_path)
     conns = load_connections_with_attrs(excel_path)
     if not conns or not nodes:
@@ -221,10 +227,37 @@ def build_wire_spec_comparison(
     if max_connections is not None:
         conns = conns[: max_connections]
 
+    _log(f"  Wire spec: {len(conns)} connections, {len(nodes)} nodes")
+
     prj = shape_base_path / "ElectricLine selection.prj"
     if not prj.exists():
+        _log(f"  Wire spec: PRJ file not found at {prj}")
         return []
+    _log("  Wire spec: loading shapefiles...")
     trans = transformer_wgs84_to_layer(prj)
+
+    # Pre-load layers once (avoids per-connection Path.exists + dict lookups)
+    el_shp = shape_base_path / "ElectricLine selection.shp"
+    s_shp = shape_base_path / "S_ElectricLine selection.shp"
+    el_layer = _get_layer(el_shp) if el_shp.exists() else None
+    s_layer = _get_layer(s_shp) if s_shp.exists() else None
+    if not el_layer:
+        _log("  Wire spec: ElectricLine shapefile not found")
+        return []
+
+    # Pre-transform all node coordinates (avoids repeated transforms for shared nodes)
+    projected: Dict[str, Tuple[float, float]] = {}
+    for nid, nd in nodes.items():
+        lat = nd.get("latitude")
+        lon = nd.get("longitude")
+        if lat is None or lon is None:
+            continue
+        try:
+            x, y = trans.transform(float(lon), float(lat))
+            projected[nid] = (x, y)
+        except (TypeError, ValueError):
+            continue
+    _log(f"  Wire spec: {len(projected)} nodes projected")
 
     scid_to_pplx: Dict[str, str] = {}
     for fp in pplx_file_paths:
@@ -241,22 +274,19 @@ def build_wire_spec_comparison(
     pplx_cache: Dict[str, Any] = {}
 
     rows = []
-    for c in conns:
-        n1 = nodes.get(c["node_id_1"])
-        n2 = nodes.get(c["node_id_2"])
-        if not n1 or not n2:
+    total = len(conns)
+    for ci, c in enumerate(conns):
+        if ci > 0 and ci % 50 == 0:
+            _log(f"  Wire spec: {ci}/{total} connections processed...")
+
+        nid1, nid2 = c["node_id_1"], c["node_id_2"]
+        xy1 = projected.get(nid1)
+        xy2 = projected.get(nid2)
+        if not xy1 or not xy2:
             continue
-        lat1 = n1.get("latitude")
-        lon1 = n1.get("longitude")
-        lat2 = n2.get("latitude")
-        lon2 = n2.get("longitude")
-        if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
-            continue
-        try:
-            lat1, lon1 = float(lat1), float(lon1)
-            lat2, lon2 = float(lat2), float(lon2)
-        except (TypeError, ValueError):
-            continue
+
+        n1 = nodes[nid1]
+        n2 = nodes[nid2]
         scid1 = str(n1.get("scid") or "").strip()
         scid2 = str(n2.get("scid") or "").strip()
         base1 = (scid1.split() or [""])[0]
@@ -265,9 +295,16 @@ def build_wire_spec_comparison(
             continue
         pole_pair = f"{scid1 or base1}-{scid2 or base2}"
 
-        shape_vals = wire_spec_between_points_oppd(
-            lat1, lon1, lat2, lon2, shape_base_path, trans
-        )
+        # Query layers directly with pre-transformed coordinates
+        el_result = el_layer.query(xy1[0], xy1[1], xy2[0], xy2[1])
+        shape_vals = {
+            "Primary": (el_result.get("d_masterma") or "").strip(),
+            "Neutral": (el_result.get("d_neutralm") or "").strip(),
+            "Secondary": "",
+        }
+        if s_layer:
+            s_result = s_layer.query(xy1[0], xy1[1], xy2[0], xy2[1])
+            shape_vals["Secondary"] = (s_result.get("d_masterma") or "").strip()
 
         span_ft = c.get("span_distance")
         span_in = (span_ft * 12) if span_ft is not None else None

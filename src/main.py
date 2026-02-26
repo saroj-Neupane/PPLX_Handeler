@@ -57,6 +57,7 @@ def headless_main(args) -> int:
         "power_keywords": parse_keywords(config_manager.get("power_keywords", "")),
         "pco_keywords": parse_keywords(config_manager.get("pco_keywords", "")),
         "aux5_keywords": parse_keywords(config_manager.get("aux5_keywords", "")),
+        "power_label": config_manager.get("power_label", "POWER"),
     }
     # --- Output directory ---
     timestamp = datetime.now().strftime("%Y_%m_%d_%H%M%S")
@@ -118,15 +119,17 @@ def headless_main(args) -> int:
                 shape_base = Path(_get_project_root()) / "data" / "OPPD" / "shape"
                 if shape_base.exists():
                     wire_spec_data = build_wire_spec_comparison(
-                        Path(excel_path), files, shape_base, extract_scid_from_filename
+                        Path(excel_path), files, shape_base, extract_scid_from_filename,
+                        log_callback=print,
                     )
                     print(f"  Wire spec rows: {len(wire_spec_data)}")
             except Exception as e:
                 print(f"  Wire spec comparison failed: {e}")
 
-        log_path = os.path.join(output_root, f"{name}_change_log.xlsx")
+        log_path = os.path.join(output_root, f"{name}_change_log_{timestamp}.xlsx")
+        wire_spec_mapping = config_manager.get("wire_spec_mapping", {})
         try:
-            if write_change_log(log_path, csv_data, wire_spec_data):
+            if write_change_log(log_path, csv_data, wire_spec_data, wire_spec_mapping):
                 print(f"  Change log: {log_path}")
         except Exception as e:
             print(f"  WARNING: Could not write change log: {e}")

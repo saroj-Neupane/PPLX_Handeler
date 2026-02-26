@@ -140,12 +140,12 @@ class ProcessingFrame(ttk.Frame):
 
         thread = threading.Thread(
             target=self.process_files,
-            args=(category_data, output_root),
+            args=(category_data, output_root, timestamp),
         )
         thread.daemon = True
         thread.start()
 
-    def process_files(self, category_data: List[Dict], output_root: str):
+    def process_files(self, category_data: List[Dict], output_root: str, timestamp: str):
         try:
             os.makedirs(output_root, exist_ok=True)
             excel_path = self.config_manager.get("excel_file_path", "")
@@ -202,6 +202,7 @@ class ProcessingFrame(ttk.Frame):
                         "power_keywords": parse_keywords(self.config_manager.get("power_keywords", "")),
                         "pco_keywords": parse_keywords(self.config_manager.get("pco_keywords", "")),
                         "aux5_keywords": parse_keywords(self.config_manager.get("aux5_keywords", "")),
+                        "power_label": self.config_manager.get("power_label", "POWER"),
                     },
                 )
 
@@ -233,9 +234,11 @@ class ProcessingFrame(ttk.Frame):
                     else:
                         shape_base = _wire_spec_base_path()
                         if excel_path and shape_base.exists():
+                            self.log_message("  Starting wire spec comparison...")
                             try:
                                 wire_spec_data = build_wire_spec_comparison(
                                     Path(excel_path), files, shape_base, extract_scid_from_filename,
+                                    log_callback=self.log_message,
                                 )
                                 if wire_spec_data:
                                     self.log_message(f"  Wire spec comparison: {len(wire_spec_data)} rows")
@@ -245,9 +248,10 @@ class ProcessingFrame(ttk.Frame):
                             self.log_message(f"  Wire spec skipped: shape dir not found at {shape_base}")
 
                 if csv_data or wire_spec_data:
-                    change_log_path = os.path.join(output_root, f"{name}_change_log.xlsx")
+                    change_log_path = os.path.join(output_root, f"{name}_change_log_{timestamp}.xlsx")
+                    wire_spec_mapping = self.config_manager.get("wire_spec_mapping", {})
                     try:
-                        if write_change_log(change_log_path, csv_data, wire_spec_data):
+                        if write_change_log(change_log_path, csv_data, wire_spec_data, wire_spec_mapping):
                             self.log_message(f"{name} change log saved: {change_log_path}")
                             summary[name]["csv_path"] = change_log_path
                         else:

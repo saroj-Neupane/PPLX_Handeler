@@ -30,10 +30,12 @@ def analyze_mr_note_for_aux_data(
     power_keywords: Optional[List[str]] = None,
     pco_keywords: Optional[List[str]] = None,
     aux5_keywords: Optional[List[str]] = None,
+    power_label: str = "POWER",
 ) -> Tuple[str, str]:
     """
     Analyze mr_note to determine Aux Data 4 and 5 values.
     Returns (aux_data_4, aux_data_5) - both in ALL CAPS format.
+    power_label replaces "POWER" in output (e.g. "OPPD" -> "OPPD MAKE READY").
     """
     if not mr_note or mr_note.strip() == "":
         return "NO MAKE READY", "NO"
@@ -43,6 +45,7 @@ def analyze_mr_note_for_aux_data(
     power_keywords = _normalize_keywords(power_keywords)
     pco_keywords = _normalize_keywords(pco_keywords)
     aux5_keywords = _normalize_keywords(aux5_keywords)
+    label = power_label.upper()
 
     if any(keyword in mr_note_upper for keyword in pco_keywords):
         aux_data_4 = "PCO"
@@ -50,11 +53,11 @@ def analyze_mr_note_for_aux_data(
         has_comm = any(keyword in mr_note_upper for keyword in comm_keywords)
         has_power = any(keyword in mr_note_upper for keyword in power_keywords)
         if has_comm and has_power:
-            aux_data_4 = "POWER & COMM MAKE READY"
+            aux_data_4 = f"{label} & COMM MAKE READY"
         elif has_comm:
             aux_data_4 = "COMM MAKE READY"
         elif has_power:
-            aux_data_4 = "POWER MAKE READY"
+            aux_data_4 = f"{label} MAKE READY"
         else:
             aux_data_4 = "NO MAKE READY"
 
@@ -74,6 +77,7 @@ def determine_aux_data_values(
     power_keywords: Optional[List[str]] = None,
     pco_keywords: Optional[List[str]] = None,
     aux5_keywords: Optional[List[str]] = None,
+    power_label: str = "POWER",
 ) -> dict:
     """Determine Aux Data values based on SCID, mr_note, and Excel data."""
     aux_updates = {}
@@ -93,6 +97,7 @@ def determine_aux_data_values(
         power_keywords=power_keywords,
         pco_keywords=pco_keywords,
         aux5_keywords=aux5_keywords,
+        power_label=power_label,
     )
     aux_updates["Aux Data 4"] = aux_data_4
     aux_updates["Aux Data 5"] = aux_data_5

@@ -73,10 +73,11 @@ def load_keyword_settings(config_filename: str = None) -> tuple:
                     parse_keywords(config.get("power_keywords")) or [],
                     parse_keywords(config.get("pco_keywords")) or [],
                     parse_keywords(config.get("aux5_keywords")) or [],
+                    config.get("power_label", "POWER"),
                 )
         except Exception:
             continue
-    return [], [], [], []
+    return [], [], [], [], "POWER"
 
 
 def _load_excel_data_pandas(excel_file_path: str) -> tuple:
@@ -163,7 +164,7 @@ def create_pplx_excel(
 
     valid_scids = set(mr_note_mapping.keys())
     pplx_files = sorted(glob.glob(os.path.join(source_pplx_dir, "*.pplx")))
-    comm_keywords, power_keywords, pco_keywords, aux5_keywords = load_keyword_settings()
+    comm_keywords, power_keywords, pco_keywords, aux5_keywords, power_label = load_keyword_settings()
 
     csv_data = []
     processed_count = 0
@@ -190,6 +191,7 @@ def create_pplx_excel(
             power_keywords=power_keywords,
             pco_keywords=pco_keywords,
             aux5_keywords=aux5_keywords,
+            power_label=power_label,
         )
         if update_pplx_aux_data(modified_path, aux_data_updates):
             updated_count += 1
