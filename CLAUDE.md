@@ -7,14 +7,17 @@ Python GUI application for batch editing PPLX (Pole Line Engineering XML) files 
 ```
 app.py                    # Entry point (imports src.main)
 src/
-  main.py                 # GUI initialization
+  main.py                 # GUI initialization + headless CLI
   config/manager.py       # Config/state persistence, PPLXConfigManager
   core/
     handler.py            # PPLXHandler - XML parsing/manipulation
-    logic.py              # Business logic (aux data, keyword matching)
-    utils.py              # Shared utilities
+    logic.py              # Business logic (aux data, keyword matching, constants)
+    processor.py          # Per-file batch processing (shared by GUI & CLI)
+    utils.py              # Shared utilities (parse_keywords, safe_filename_part)
+    wire_spec_from_excel.py  # Wire spec comparison (shapefiles, nodes/connections)
   excel/
     loader.py             # Excel data loading (nodes sheet)
+    changelog.py          # Change log Excel export
     fill_details.py       # PPLX fill details Excel export
   gui/
     app.py                # Main window (PPLXGUIApp), theme application
@@ -24,7 +27,6 @@ src/
       aux_data.py         # AuxDataEditFrame (8 aux fields + Excel)
       processing.py       # ProcessingFrame (batch processing, threading)
 config/                   # Configuration profiles
-  _active.json            # Active profile tracker
   OPPD.json               # OPPD config (keywords, power labels)
   state.json              # Session state (gitignored)
 assets/handler.ico        # App icon
@@ -43,7 +45,9 @@ output/                   # Output log Excel files
 
 ## Key Patterns
 
-- PPLX files are XML; parsed with `xml.etree.ElementTree`
+- PPLX files are XML; parsed with lxml (fast) or stdlib xml.etree.ElementTree (fallback)
+- Module-level helpers `_get_attr_str`, `_get_attr_float`, `_parse_span_attrs` in handler.py (DRY)
+- Constants like `POLE_TAG_BLANK`, `DEFAULT_AUX_VALUES` live in `logic.py` (single source of truth)
 - SCID extracted from filenames to match Excel data
 - Aux Data 1-5 assigned via keyword matching against MR notes
 - Categories: EXISTING and PROPOSED (processed separately)

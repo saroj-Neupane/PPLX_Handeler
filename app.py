@@ -9,6 +9,9 @@ Run headless: python app.py --headless --existing <folder> --proposed <folder> -
 if __name__ == "__main__":
     import argparse
     import sys
+    import time as _time
+
+    _t_process_start = _time.perf_counter()
 
     parser = argparse.ArgumentParser(description="PPLX Handler")
     parser.add_argument("--headless", action="store_true", help="Run without GUI")
@@ -20,8 +23,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.headless:
+        _t_before_import = _time.perf_counter()
         from src.main import headless_main
-        sys.exit(headless_main(args))
+        _t_after_import = _time.perf_counter()
+        exit_code = headless_main(args)
+        _t_after_headless = _time.perf_counter()
+        print(
+            f"\n[TIMING] process start->import: {_t_before_import - _t_process_start:.2f}s | "
+            f"import headless_main: {_t_after_import - _t_before_import:.2f}s | "
+            f"headless_main(): {_t_after_headless - _t_after_import:.2f}s | "
+            f"total: {_t_after_headless - _t_process_start:.2f}s"
+        )
+        sys.exit(exit_code)
     else:
         from src.main import main
         main()

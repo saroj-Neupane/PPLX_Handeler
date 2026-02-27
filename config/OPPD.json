@@ -15,5 +15,16 @@
     "DUPLEX 4 AWG": "4-2C",
     "AAC 336.4 KCM 19 STRAND TULIP": "336.4 AA TRX",
     "#4 COPPER SOLID": "4-2C"
-  }
+  },
+  "span_type_mapping": {
+    "open secondary": "secondary",
+    "proposed metronet": "fiber",
+    "proposed metronet guy": null,
+    "power guy": null,
+    "catv": "catv",
+    "neutral": "neutral",
+    "primary": "primary",
+    "secondary": "secondary"
+  },
+  "midspan_heights_file_path": "C:/Users/nsaro/Desktop/Python Projects/PPLX_Handler/Test Files/OPPD/NEOM104 Node and Midspan Heights XLSX.xlsx"
 }

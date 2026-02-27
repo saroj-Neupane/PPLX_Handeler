@@ -17,7 +17,7 @@ THEME = {
 }
 
 # Aux fields with auto-fill from Excel
-POLE_TAG_BLANK = "NO TAG"
+from src.core.logic import POLE_TAG_BLANK  # noqa: F401 - re-exported
 PLACEHOLDER_AUX1 = "(Will auto-fill from Excel)"
 PLACEHOLDER_AUX2 = "(Will fill from sheet)"
 

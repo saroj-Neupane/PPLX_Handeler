@@ -195,23 +195,42 @@ class PPLXGUIApp:
             excel_row, text="Browse", command=self.select_excel_file,
         ).grid(row=0, column=2)
 
+        # -- Row 2: Midspan heights Excel selection (optional) --
+        heights_row = ttk.Frame(main)
+        heights_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        heights_row.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            heights_row, text="Midspan Heights File", style="Heading.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+
+        self.midspan_file_var = tk.StringVar()
+        self.midspan_file_var.set(self.config_manager.get("midspan_heights_file_path", "No file selected"))
+        ttk.Label(
+            heights_row, textvariable=self.midspan_file_var, style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 8))
+
+        ttk.Button(
+            heights_row, text="Browse", command=self.select_midspan_file,
+        ).grid(row=0, column=2)
+
         # Subtle divider
         tk.Frame(main, height=1, bg=THEME["border"]).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(0, 16),
+            row=3, column=0, columnspan=2, sticky="ew", pady=(0, 16),
         )
 
         # -- Row 3: File lists side by side --
         self.existing_frame = PPLXFileListFrame(
             main, self.config_manager, category="EXISTING",
         )
-        self.existing_frame.grid(row=3, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        self.existing_frame.grid(row=4, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
 
         self.proposed_frame = PPLXFileListFrame(
             main, self.config_manager, category="PROPOSED",
         )
-        self.proposed_frame.grid(row=3, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
+        self.proposed_frame.grid(row=4, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
 
-        main.rowconfigure(3, weight=1)
+        main.rowconfigure(4, weight=1)
 
         # -- Row 4: Processing --
         self.processing_frame = ProcessingFrame(
@@ -220,8 +239,8 @@ class PPLXGUIApp:
             self.existing_frame,
             self.proposed_frame,
         )
-        self.processing_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
-        main.rowconfigure(4, weight=2)
+        self.processing_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
+        main.rowconfigure(5, weight=2)
 
     def _on_config_changed(self, event=None):
         name = self.config_var.get()
@@ -236,6 +255,15 @@ class PPLXGUIApp:
         if file_path:
             self.excel_file_var.set(file_path)
             self.config_manager.set("excel_file_path", file_path)
+
+    def select_midspan_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Node & Midspan Heights Excel File",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
+        )
+        if file_path:
+            self.midspan_file_var.set(file_path)
+            self.config_manager.set("midspan_heights_file_path", file_path)
 
     def show_batch_report(self):
         from datetime import datetime

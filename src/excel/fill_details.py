@@ -3,142 +3,64 @@ Create PPLX_Fill_Details.xlsx from PPLX files and Excel data.
 """
 
 import glob
-import json
 import os
 import shutil
 from pathlib import Path
 
-import xml.etree.ElementTree as ET
-
+from src.core.handler import PPLXHandler
+from src.core.logic import (
+    analyze_mr_note_for_aux_data,
+    extract_scid_from_filename,
+    DEFAULT_AUX_VALUES,
+)
 from src.core.utils import parse_keywords
+from src.config.manager import PPLXConfigManager
+from src.excel.loader import load_excel_data
 
 try:
-    import pandas as pd
     from openpyxl import Workbook
-    from openpyxl.utils.dataframe import dataframe_to_rows
     from openpyxl.worksheet.table import Table, TableStyleInfo
-    PANDAS_AVAILABLE = True
+    OPENPYXL_AVAILABLE = True
 except ImportError:
-    PANDAS_AVAILABLE = False
-
-from src.core.logic import (
-    determine_aux_data_values,
-    extract_scid_from_filename,
-)
-from src.config.manager import get_active_config_name
-
-
-def extract_aux_data_from_pplx(pplx_file_path: str) -> dict:
-    """Extract Aux Data 1-5 from a PPLX file."""
-    aux_data = {
-        "Aux Data 1": "Unset",
-        "Aux Data 2": "Unset",
-        "Aux Data 3": "Unset",
-        "Aux Data 4": "Unset",
-        "Aux Data 5": "Unset",
-    }
-    try:
-        tree = ET.parse(pplx_file_path)
-        root = tree.getroot()
-        for wood_pole in root.findall(".//WoodPole"):
-            attributes = wood_pole.find("ATTRIBUTES")
-            if attributes is not None:
-                for value in attributes.findall("VALUE"):
-                    name = value.get("NAME")
-                    if name and name.startswith("Aux Data ") and name in aux_data:
-                        aux_data[name] = value.text or "Unset"
-                break
-    except Exception as e:
-        print(f"Error processing {pplx_file_path}: {str(e)}")
-    return aux_data
+    OPENPYXL_AVAILABLE = False
 
 
 def load_keyword_settings(config_filename: str = None) -> tuple:
-    """Load keyword overrides from config file in config/ folder."""
-    root = Path(__file__).resolve().parents[2]
-    config_name = config_filename or get_active_config_name()
-    if not config_name.endswith(".json"):
-        config_name = f"{config_name}.json"
-    candidate_paths = [
-        root / "config" / config_name,
-        root / "config" / "OPPD.json",
-    ]
-    for path in candidate_paths:
-        try:
-            if path.is_file():
-                with open(path, "r") as f:
-                    config = json.load(f)
-                return (
-                    parse_keywords(config.get("comm_keywords")) or [],
-                    parse_keywords(config.get("power_keywords")) or [],
-                    parse_keywords(config.get("pco_keywords")) or [],
-                    parse_keywords(config.get("aux5_keywords")) or [],
-                    config.get("power_label", "POWER"),
-                )
-        except Exception:
-            continue
-    return [], [], [], [], "POWER"
+    """Load keyword overrides from config profile."""
+    mgr = PPLXConfigManager(config_name=config_filename)
+    return (
+        parse_keywords(mgr.get("comm_keywords", "")),
+        parse_keywords(mgr.get("power_keywords", "")),
+        parse_keywords(mgr.get("pco_keywords", "")),
+        parse_keywords(mgr.get("aux5_keywords", "")),
+        mgr.get("power_label", "POWER"),
+    )
 
 
-def _load_excel_data_pandas(excel_file_path: str) -> tuple:
-    """Load Excel data using pandas (for create_pplx_excel script)."""
+def _load_excel_mappings(excel_file_path: str) -> tuple:
+    """Load Excel data using shared loader and build MR note/aux mappings."""
     mr_note_mapping = {}
     full_data_mapping = {}
-    if not PANDAS_AVAILABLE:
+    data = load_excel_data(excel_file_path)
+    if not data:
         return mr_note_mapping, full_data_mapping
 
-    try:
-        df = pd.read_excel(excel_file_path, sheet_name="nodes")
-        required = ["scid", "node_type", "pole_status", "mr_note"]
-        if any(c not in df.columns for c in required):
-            return mr_note_mapping, full_data_mapping
+    for scid, row in data.items():
+        scid_str = str(scid).strip()
+        if not scid_str:
+            continue
+        mr_note = str(row.get("mr_note", "") or "").strip()
+        row_data = {
+            "pole_tag_company": row.get("pole_tag_company") or "MVEC",
+            "pole_tag_tagtext": row.get("pole_tag_tagtext") or "",
+            "mr_note": mr_note,
+        }
+        padded = scid_str.zfill(3) if scid_str.isdigit() else scid_str
+        for key in (scid_str, padded):
+            mr_note_mapping[key] = mr_note
+            full_data_mapping[key] = row_data
 
-        filtered = df[
-            (df["node_type"].str.lower() == "pole")
-            & (df["pole_status"].str.lower() != "underground")
-        ]
-        for _, row in filtered.iterrows():
-            scid = str(row["scid"]).strip()
-            mr_note = str(row["mr_note"]).strip() if pd.notna(row["mr_note"]) else ""
-            padded = scid.zfill(3) if scid.isdigit() else scid
-            row_data = {
-                "pole_tag_company": str(row["pole_tag_company"])
-                if pd.notna(row["pole_tag_company"])
-                else "MVEC",
-                "pole_tag_tagtext": str(row["pole_tag_tagtext"])
-                if pd.notna(row["pole_tag_tagtext"])
-                else "",
-                "mr_note": mr_note,
-            }
-            for s in (scid, padded):
-                mr_note_mapping[s] = mr_note
-                full_data_mapping[s] = row_data
-    except Exception as e:
-        print(f"Error loading Excel: {e}")
     return mr_note_mapping, full_data_mapping
-
-
-def update_pplx_aux_data(pplx_file_path: str, aux_data_updates: dict) -> bool:
-    """Update multiple Aux Data fields in a PPLX file."""
-    try:
-        tree = ET.parse(pplx_file_path)
-        root = tree.getroot()
-        updated = False
-        for wood_pole in root.findall(".//WoodPole"):
-            attributes = wood_pole.find("ATTRIBUTES")
-            if attributes is not None:
-                for value in attributes.findall("VALUE"):
-                    name = value.get("NAME")
-                    if name in aux_data_updates:
-                        value.text = aux_data_updates[name]
-                        updated = True
-                if updated:
-                    tree.write(pplx_file_path, encoding="utf-8", xml_declaration=True)
-                    return True
-                break
-    except Exception as e:
-        print(f"Error updating {pplx_file_path}: {e}")
-    return False
 
 
 def create_pplx_excel(
@@ -148,8 +70,8 @@ def create_pplx_excel(
     output_excel: str = "PPLX_Fill_Details.xlsx",
 ) -> None:
     """Create PPLX_Fill_Details.xlsx from filtered PPLX files and Excel data."""
-    if not PANDAS_AVAILABLE:
-        print("Error: pandas and openpyxl required for create_pplx_excel")
+    if not OPENPYXL_AVAILABLE:
+        print("Error: openpyxl is required for create_pplx_excel")
         return
 
     if os.path.exists(modified_pplx_dir):
@@ -157,7 +79,7 @@ def create_pplx_excel(
     os.makedirs(modified_pplx_dir, exist_ok=True)
 
     print("Loading Excel data...")
-    mr_note_mapping, full_data_mapping = _load_excel_data_pandas(excel_file_path)
+    mr_note_mapping, full_data_mapping = _load_excel_mappings(excel_file_path)
     if not mr_note_mapping:
         print("No filtered Excel data found.")
         return
@@ -182,41 +104,68 @@ def create_pplx_excel(
         modified_path = os.path.join(modified_pplx_dir, filename)
         shutil.copy2(pplx_file, modified_path)
         mr_note = mr_note_mapping.get(file_number, "")
+        row_data = full_data_mapping.get(file_number, {})
 
-        aux_data_updates = determine_aux_data_values(
-            file_number,
+        # Determine aux data values
+        aux_updates = {}
+        aux_updates["Aux Data 1"] = row_data.get("pole_tag_company", DEFAULT_AUX_VALUES["Aux Data 1"])
+        pole_tag = row_data.get("pole_tag_tagtext", "")
+        if not pole_tag or pole_tag.strip() == "" or str(pole_tag).lower() == "nan":
+            aux_updates["Aux Data 2"] = DEFAULT_AUX_VALUES["Aux Data 2"]
+        else:
+            aux_updates["Aux Data 2"] = str(pole_tag).strip()
+        aux_updates["Aux Data 3"] = DEFAULT_AUX_VALUES["Aux Data 3"]
+        aux_data_4, aux_data_5 = analyze_mr_note_for_aux_data(
             mr_note,
-            full_data_mapping,
             comm_keywords=comm_keywords,
             power_keywords=power_keywords,
             pco_keywords=pco_keywords,
             aux5_keywords=aux5_keywords,
             power_label=power_label,
         )
-        if update_pplx_aux_data(modified_path, aux_data_updates):
+        aux_updates["Aux Data 4"] = aux_data_4
+        aux_updates["Aux Data 5"] = aux_data_5
+
+        # Use PPLXHandler to update the file — no duplicate XML code
+        handler = PPLXHandler(modified_path)
+        was_updated = False
+        for aux_name, aux_val in aux_updates.items():
+            num = int(aux_name.split()[-1])
+            if handler.set_aux_data(num, aux_val):
+                was_updated = True
+        if was_updated and handler.save_file():
             updated_count += 1
 
-        aux_data = extract_aux_data_from_pplx(modified_path)
+        aux_data = handler.get_aux_data()
         csv_data.append(
             {
                 "File Name": filename,
-                "Aux Data 1": aux_data["Aux Data 1"],
-                "Aux Data 2": aux_data["Aux Data 2"],
-                "Aux Data 3": aux_data["Aux Data 3"],
-                "Aux Data 4": aux_data["Aux Data 4"],
-                "Aux Data 5": aux_data["Aux Data 5"],
+                "Aux Data 1": aux_data.get("Aux Data 1", "Unset"),
+                "Aux Data 2": aux_data.get("Aux Data 2", "Unset"),
+                "Aux Data 3": aux_data.get("Aux Data 3", "Unset"),
+                "Aux Data 4": aux_data.get("Aux Data 4", "Unset"),
+                "Aux Data 5": aux_data.get("Aux Data 5", "Unset"),
                 "mr_note": mr_note,
             }
         )
 
     if csv_data:
-        df = pd.DataFrame(csv_data)
         wb = Workbook()
         ws = wb.active
         ws.title = "PPLX Fill Details"
-        for r in dataframe_to_rows(df, index=False, header=True):
-            ws.append(r)
-        table_range = f"A1:{chr(65 + len(df.columns) - 1)}{len(df) + 1}"
+        headers = [
+            "File Name",
+            "Aux Data 1",
+            "Aux Data 2",
+            "Aux Data 3",
+            "Aux Data 4",
+            "Aux Data 5",
+            "mr_note",
+        ]
+        ws.append(headers)
+        for row in csv_data:
+            ws.append([row.get(h, "") for h in headers])
+        table_range = f"A1:{chr(65 + len(headers) - 1)}{len(csv_data) + 1}"
         table = Table(displayName="PPLXData", ref=table_range)
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium9",
@@ -228,7 +177,7 @@ def create_pplx_excel(
         ws.add_table(table)
         for column in ws.columns:
             max_length = max(
-                (len(str(cell.value)) for cell in column),
+                (len(str(cell.value)) for cell in column if cell.value is not None),
                 default=0,
             )
             ws.column_dimensions[column[0].column_letter].width = min(

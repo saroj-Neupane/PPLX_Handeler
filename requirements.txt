@@ -1,6 +1,5 @@
 # Excel file reading/writing
 openpyxl>=3.0.0
-pandas>=1.3.0
 
 # Icon display in UI
 Pillow>=9.0.0
@@ -8,3 +7,13 @@ Pillow>=9.0.0
 # Wire spec shapefile support (OPPD config)
 pyshp>=2.3.0
 pyproj>=3.0.0
+
+# Optional: faster shapefile load (5–10x). Install with: pip install pyogrio geopandas
+# pyogrio>=0.6.0
+# geopandas>=0.12.0
+
+# Optional: faster spatial query loop (R-tree). Install with: pip install Rtree
+# Rtree>=1.0.0
+
+# Optional: faster PPLX XML parsing (5–20x). Install with: pip install lxml
+# lxml>=4.9.0

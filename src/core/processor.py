@@ -5,13 +5,12 @@ from typing import Dict, Optional, Set
 
 from src.core.handler import PPLXHandler
 from src.core.logic import (
+    POLE_TAG_BLANK,
     analyze_mr_note_for_aux_data,
     extract_scid_from_filename,
     clean_scid_keywords,
 )
 from src.core.utils import safe_filename_part
-
-POLE_TAG_BLANK = "NO TAG"
 
 
 def process_single_file(
@@ -33,6 +32,7 @@ def process_single_file(
 
     try:
         scid = extract_scid_from_filename(filename)
+        row_data = excel_data.get(scid) if excel_data else None
         clean_pole_number = clean_scid_keywords(scid)
 
         if excel_data and scid not in valid_scids:
@@ -50,9 +50,7 @@ def process_single_file(
         pole_tag = POLE_TAG_BLANK
         mr_note = ""
 
-        if excel_data and scid in excel_data:
-            row_data = excel_data[scid]
-
+        if row_data:
             if auto_fill_aux1:
                 pole_owner = row_data.get("pole_tag_company", "")
                 if pole_owner:
@@ -75,11 +73,6 @@ def process_single_file(
             _set_aux(handler, 5, aux_data_5, logs, prefix="Auto-filled")
         else:
             _set_aux(handler, 2, pole_tag, logs, prefix="Set (fallback)")
-
-        if excel_data and scid in excel_data:
-            if auto_fill_aux2:
-                pole_tag = excel_data[scid].get("pole_tag_tagtext", pole_tag)
-            mr_note = excel_data[scid].get("mr_note", mr_note)
 
         final_aux = handler.get_aux_data()
         aux_data_4 = final_aux.get("Aux Data 4", "")

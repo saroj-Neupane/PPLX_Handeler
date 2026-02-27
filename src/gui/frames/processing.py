@@ -25,10 +25,11 @@ def _wire_spec_base_path():
 
 
 try:
-    from src.core.wire_spec_from_excel import build_wire_spec_comparison
+    from src.core.wire_spec_from_excel import build_wire_spec_comparison, build_spans_comparison_data
     _WIRE_SPEC_IMPORT_ERROR = None
 except ImportError as _e:
     build_wire_spec_comparison = None
+    build_spans_comparison_data = None
     _WIRE_SPEC_IMPORT_ERROR = str(_e)
 
 
@@ -150,6 +151,7 @@ class ProcessingFrame(ttk.Frame):
             os.makedirs(output_root, exist_ok=True)
             excel_path = self.config_manager.get("excel_file_path", "")
             excel_data = load_excel_data(excel_path, log_callback=self.log_message)
+            midspan_path = self.config_manager.get("midspan_heights_file_path", "")
             valid_scids = set(excel_data.keys()) if excel_data else set()
 
             total_files = sum(len(c["files"]) for c in category_data)
@@ -184,6 +186,7 @@ class ProcessingFrame(ttk.Frame):
                 condition_value = name
                 csv_data = []
                 wire_spec_data = []
+                spans_data = []
 
                 self.log_message(f"\nCategory: {name}")
                 if source_folder:
@@ -227,7 +230,7 @@ class ProcessingFrame(ttk.Frame):
                         pct = (processed_count / total_files) * 100
                         self.progress_bar.after(0, lambda p=pct: self.progress_var.set(p))
 
-                # OPPD config: wire spec comparison
+                # OPPD config: wire spec comparison and spans comparison
                 if self.config_manager.config_name == "OPPD" and files:
                     if not build_wire_spec_comparison:
                         self.log_message(f"  Wire spec skipped: {_WIRE_SPEC_IMPORT_ERROR or 'import unavailable'}")
@@ -246,12 +249,26 @@ class ProcessingFrame(ttk.Frame):
                                 self.log_message(f"  Wire spec comparison failed: {e}")
                         else:
                             self.log_message(f"  Wire spec skipped: shape dir not found at {shape_base}")
+                    if excel_path and build_spans_comparison_data:
+                        try:
+                            self.log_message("  Building spans comparison (Katapult vs PPLX)...")
+                            span_mapping = self.config_manager.get("span_type_mapping", {})
+                            spans_data = build_spans_comparison_data(
+                                Path(excel_path), files, extract_scid_from_filename,
+                                log_callback=self.log_message,
+                                span_type_mapping=span_mapping,
+                                midspan_heights_path=Path(midspan_path) if midspan_path else None,
+                            )
+                            if spans_data:
+                                self.log_message(f"  Spans comparison: {len(spans_data)} rows")
+                        except Exception as e:
+                            self.log_message(f"  Spans comparison failed: {e}")
 
-                if csv_data or wire_spec_data:
+                if csv_data or wire_spec_data or spans_data:
                     change_log_path = os.path.join(output_root, f"{name}_change_log_{timestamp}.xlsx")
                     wire_spec_mapping = self.config_manager.get("wire_spec_mapping", {})
                     try:
-                        if write_change_log(change_log_path, csv_data, wire_spec_data, wire_spec_mapping):
+                        if write_change_log(change_log_path, csv_data, wire_spec_data, wire_spec_mapping, spans_data=spans_data):
                             self.log_message(f"{name} change log saved: {change_log_path}")
                             summary[name]["csv_path"] = change_log_path
                         else:
